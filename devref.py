@@ -26,7 +26,14 @@ except ImportError:
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
-DEVREF_DIR = Path(r"S:\devref")
+# Auto-detect location: works both as PyInstaller exe and as a Python script
+if getattr(sys, 'frozen', False):
+    # Running as compiled exe (PyInstaller)
+    DEVREF_DIR = Path(sys.executable).parent
+else:
+    # Running as Python script
+    DEVREF_DIR = Path(__file__).resolve().parent
+
 REF_DIR    = DEVREF_DIR / "ref"
 REF_FILE   = REF_DIR / "ref.json"
 SYN_FILE   = REF_DIR / "syntax.json"
@@ -196,6 +203,8 @@ def cmd_help():
   devref --edit <tool> --syntax <name>   Edit a syntax entry
   devref --delete <tool>                 Delete entire tool entry
   devref --delete <tool> --topic <name>  Delete a specific topic
+  devref --delete <tool> --syntax <name> Delete a specific syntax entry
+  devref --delete <tool> --syntax        Delete all syntax entries for tool
 
   TAGS
   ────
@@ -608,14 +617,14 @@ def cmd_edit(args):
 
 def cmd_delete(args):
     if not args:
-        warn("Usage: devref --delete <tool>  OR  devref --delete <tool> --topic <name>")
+        warn("Usage: devref --delete <tool>  OR  devref --delete <tool> --topic <name>  OR  devref --delete <tool> --syntax <name>")
         return
 
     tool = args[0].lower()
 
     if "--topic" in args:
         idx = args.index("--topic")
-        topic_name = args[idx + 1] if idx + 1 < len(args) else None
+        topic_name = args[idx + 1] if idx + 1 < len(args) and not args[idx+1].startswith("--") else None
         if not topic_name:
             warn("Provide topic name.")
             return
@@ -631,6 +640,44 @@ def cmd_delete(args):
             success(f"Topic '{key}' deleted from '{tool}'.")
         else:
             warn(f"Topic '{key}' not found.")
+
+    elif "--syntax" in args:
+        idx = args.index("--syntax")
+        syn_name = args[idx + 1] if idx + 1 < len(args) and not args[idx+1].startswith("--") else None
+
+        syn = load_json(SYN_FILE)
+        tool_syn = syn.get(tool, {}).get("entries", {})
+
+        if syn_name:
+            # Delete a specific syntax entry
+            key = syn_name.lower()
+            if key not in tool_syn:
+                warn(f"Syntax entry '{key}' not found under '{tool}'.")
+                tip(f"Run:  devref --find {tool} --syntax  to see all entries")
+                return
+            confirm = input(c(f"\n  Type '{key}' to confirm deletion: ", "yellow")).strip().lower()
+            if confirm != key:
+                warn("Cancelled.")
+                return
+            del syn[tool]["entries"][key]
+            # Clean up empty tool entry if no entries remain
+            if not syn[tool]["entries"]:
+                del syn[tool]
+            save_json(SYN_FILE, syn)
+            success(f"Syntax '{key}' deleted from '{tool}'.")
+        else:
+            # Delete all syntax entries for a tool
+            if tool not in syn:
+                warn(f"No syntax entries found for '{tool}'.")
+                return
+            confirm = input(c(f"\n  Type '{tool}' to confirm deleting ALL syntax entries for '{tool}': ", "yellow")).strip().lower()
+            if confirm != tool:
+                warn("Cancelled.")
+                return
+            del syn[tool]
+            save_json(SYN_FILE, syn)
+            success(f"All syntax entries for '{tool}' deleted.")
+
     else:
         ref = load_json(REF_FILE)
         if tool not in ref:
