@@ -1,0 +1,93 @@
+{
+  "python": {
+    "description": "High-level interpreted programming language",
+    "tags": ["language", "scripting", "data"],
+    "topics": {
+      "venv": {
+        "description": "Virtual environment to isolate project dependencies",
+        "what_it_does": "Creates a self-contained Python environment per project so packages don't conflict across projects",
+        "syntax": [
+          "python -m venv <env-name>",
+          "<env-name>\\Scripts\\activate",
+          "deactivate"
+        ],
+        "examples": [
+          "python -m venv myenv",
+          "myenv\\Scripts\\activate",
+          "pip install requests"
+        ],
+        "tags": ["environment", "isolation", "packages"]
+      },
+      "pip": {
+        "description": "Python package installer",
+        "what_it_does": "Installs, upgrades, and removes Python packages from PyPI",
+        "syntax": [
+          "pip install <package>",
+          "pip install <package>==<version>",
+          "pip uninstall <package>",
+          "pip list",
+          "pip freeze > requirements.txt",
+          "pip install -r requirements.txt"
+        ],
+        "examples": [
+          "pip install requests",
+          "pip install numpy==1.24.0",
+          "pip freeze > requirements.txt",
+          "pip install -r requirements.txt"
+        ],
+        "tags": ["packages", "install", "dependencies"]
+      },
+      "list-comprehension": {
+        "description": "Compact way to create lists using a single line expression",
+        "what_it_does": "Generates a new list by applying an expression to each item in an iterable, optionally filtering",
+        "syntax": [
+          "[<expr> for <item> in <iterable>]",
+          "[<expr> for <item> in <iterable> if <condition>]"
+        ],
+        "examples": [
+          "[x * 2 for x in range(10)]",
+          "[x for x in range(20) if x % 2 == 0]",
+          "[name.upper() for name in ['alice', 'bob']]"
+        ],
+        "tags": ["syntax", "list", "comprehension"]
+      }
+    }
+  },
+  "git": {
+    "description": "Distributed version control system",
+    "tags": ["vcs", "version-control", "collaboration"],
+    "topics": {
+      "commit": {
+        "description": "Create a snapshot of staged changes in the repository",
+        "what_it_does": "Records the staged changes permanently in the git history with a message describing what changed",
+        "syntax": [
+          "git commit -m \"<message>\"",
+          "git commit -am \"<message>\"",
+          "git commit --amend"
+        ],
+        "examples": [
+          "git commit -m \"Add login feature\"",
+          "git commit -am \"Fix typo in readme\"",
+          "git commit --amend -m \"Corrected commit message\""
+        ],
+        "tags": ["save", "history", "snapshot"]
+      },
+      "branch": {
+        "description": "Create, list, or delete branches",
+        "what_it_does": "Branches let you work on features or fixes in isolation without affecting the main codebase",
+        "syntax": [
+          "git branch <name>",
+          "git checkout -b <name>",
+          "git branch -d <name>",
+          "git branch --list"
+        ],
+        "examples": [
+          "git checkout -b feature/login",
+          "git branch --list",
+          "git branch -d feature/login"
+        ],
+        "tags": ["branch", "feature", "isolation"]
+      }
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "python": {
+    "entries": {
+      "f-string": {
+        "description": "Format strings with embedded expressions",
+        "pattern": "f\"text {<variable>} text\"",
+        "examples": [
+          "name = 'Alice'\nprint(f'Hello, {name}!')",
+          "x = 3.14\nprint(f'Pi is approximately {x:.2f}')"
+        ]
+      },
+      "lambda": {
+        "description": "Anonymous single-expression function",
+        "pattern": "lambda <args>: <expression>",
+        "examples": [
+          "double = lambda x: x * 2\ndouble(5)  # 10",
+          "sorted(items, key=lambda x: x['name'])"
+        ]
+      },
+      "try-except": {
+        "description": "Handle exceptions gracefully",
+        "pattern": "try:\n    <code>\nexcept <ExceptionType> as e:\n    <handler>",
+        "examples": [
+          "try:\n    result = 10 / 0\nexcept ZeroDivisionError as e:\n    print(f'Error: {e}')"
+        ]
+      }
+    }
+  },
+  "git": {
+    "entries": {
+      "stash": {
+        "description": "Temporarily save uncommitted changes without committing",
+        "pattern": "git stash [push|pop|list|drop]",
+        "examples": [
+          "git stash",
+          "git stash pop",
+          "git stash list",
+          "git stash drop stash@{0}"
+        ]
+      },
+      "rebase": {
+        "description": "Reapply commits on top of another base branch",
+        "pattern": "git rebase <base-branch>",
+        "examples": [
+          "git rebase main",
+          "git rebase -i HEAD~3"
+        ]
+      }
+    }
+  }
+}
