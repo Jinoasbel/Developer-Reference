@@ -275,7 +275,3 @@ The `--prompt` command generates a pre-filled prompt for any tool. The workflow:
 5. `devref --import conda.json` — merges into your reference
 
 See `devref_guide.txt` for the full prompt template.
-
-## License
-
-MIT
