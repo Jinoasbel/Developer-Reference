@@ -24,7 +24,7 @@ VIProductVersion "2.0.0.0"
 VIAddVersionKey "ProductName"    "devref"
 VIAddVersionKey "ProductVersion" "2.0.0"
 VIAddVersionKey "CompanyName"    "devref"
-VIAddVersionKey "FileDescription" "devref — Personal Developer Reference CLI"
+VIAddVersionKey "FileDescription" "Developer Reference CLI"
 VIAddVersionKey "LegalCopyright" "MIT"
 
 ; ── MUI Interface Settings ────────────────────────────────────────────────────
