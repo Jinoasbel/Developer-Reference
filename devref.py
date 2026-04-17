@@ -129,9 +129,12 @@ def save_json(path: Path, data: dict):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 # ─── Settings ─────────────────────────────────────────────────────────────────
+SETTINGS_DEFAULTS = {"hints": True, "autocomplete": True}
+
 def load_settings() -> dict:
     meta = load_json(META_FILE)
-    return meta.get("settings", {"hints": True})
+    saved = meta.get("settings", {})
+    return {**SETTINGS_DEFAULTS, **saved}
 
 def save_settings(settings: dict):
     meta = load_json(META_FILE)
@@ -140,6 +143,9 @@ def save_settings(settings: dict):
 
 def hints_on() -> bool:
     return load_settings().get("hints", True)
+
+def autocomplete_on() -> bool:
+    return load_settings().get("autocomplete", True)
 
 # ─── Recent history ───────────────────────────────────────────────────────────
 def record_recent(query: str):
@@ -158,7 +164,7 @@ def smart_input(prompt_text: str, completions: list = None, hint: str = None) ->
     if show_hints and hint:
         hint_item(hint)
 
-    if HAS_PT and completions:
+    if HAS_PT and completions and autocomplete_on():
         completer = WordCompleter(completions, ignore_case=True)
         pt_style = PtStyle.from_dict({"prompt": "ansiyellow bold", "": "ansiwhite"})
         try:
@@ -254,13 +260,29 @@ def display_tool_summary(tool: str, data: dict):
     tip(f"Run:  devref --find {tool} --topic <name>  to view a topic")
     tip(f"Run:  devref --find {tool} --snippets      to view snippets")
 
+
+# ----my own -------
+BOX = 60  # inner width
+
+def _center(text):
+    pad = BOX - len(text)
+    return " " * (pad // 2) + text + " " * (pad - pad // 2)
+
+
 # ─── Help command ─────────────────────────────────────────────────────────────
 def cmd_help():
     print()
-    print(c("  ╔══════════════════════════════════════════════════════════╗", "cyan"))
-    print(c("  ║", "cyan") + c("          devref  —  Developer Reference CLI          ", "bright") + c("║", "cyan"))
-    print(c("  ║", "cyan") + c("                      v 2.0                           ", "dim") + c("║", "cyan"))
-    print(c("  ╚══════════════════════════════════════════════════════════╝", "cyan"))
+
+    print(c("  ╔" + "═" * BOX + "╗", "cyan"))
+    print(c("  ║", "cyan") + c(_center("devref  —  Developer Reference CLI"), "bright") + c("║", "cyan"))
+    print(c("  ║", "cyan") + c(_center("v 2.0"), "dim")                                 + c("║", "cyan"))
+    print(c("  ╚" + "═" * BOX + "╝", "cyan"))
+
+
+    # print(c("  ╔══════════════════════════════════════════════════════════╗", "cyan"))
+    # print(c("  ║", "cyan") + c("          devref  —  Developer Reference CLI          ", "bright") + c("║", "cyan"))
+    # print(c("  ║", "cyan") + c("                      v 2.0                           ", "dim") + c("║", "cyan"))
+    # print(c("  ╚══════════════════════════════════════════════════════════╝", "cyan"))
 
     section_header("FINDING CONTENT", "yellow")
     rows = [
@@ -328,17 +350,18 @@ def cmd_help():
 
     section_header("SETTINGS & UTILS", "cyan")
     rows = [
-        ("devref --set hints on",    "Enable wizard example hints"),
-        ("devref --set hints off",   "Disable wizard example hints"),
-        ("devref --list",            "List all tools in reference"),
-        ("devref --recent",          "Show last 10 lookups"),
-        ("devref --backup",          "Backup JSON files (timestamped)"),
-        ("devref --export <tool>",   "Export tool as Markdown"),
-        ("devref --import <file>",   "Merge external JSON into tools"),
-        ("devref --help",            "Show this help"),
+        ("devref --set hints on/off",        "Toggle wizard example hints"),
+        ("devref --set autocomplete on/off",  "Toggle prompt_toolkit autocomplete"),
+        ("devref --set",                      "Show current settings"),
+        ("devref --list",                     "List all tools in reference"),
+        ("devref --recent",                   "Show last 10 lookups"),
+        ("devref --backup",                   "Backup JSON files (timestamped)"),
+        ("devref --export <tool>",            "Export tool as Markdown"),
+        ("devref --import <file>",            "Merge JSON (auto-detects tools/snippets)"),
+        ("devref --help",                     "Show this help"),
     ]
     for cmd_str, desc in rows:
-        print(c(f"    {cmd_str:<42}", "green") + c(desc, "dim"))
+        print(c(f"    {cmd_str:<44}", "green") + c(desc, "dim"))
     print()
 
 # ─── Find command ─────────────────────────────────────────────────────────────
@@ -490,7 +513,7 @@ def cmd_search(args, scope=None, sub_scope=None):
         if file_scope in (None, "snippets"):
             for sname, sdata in snips_db.get(tool, {}).get("entries", {}).items():
 
-                if sub_scope in (None, "snippets", "topics"):
+                if sub_scope in (None, "snippets"):
                     blob = " ".join([sname, sdata.get("description",""), sdata.get("pattern","")])
                     sc = fuzzy(blob)
                     if sc >= 60:
@@ -576,6 +599,11 @@ def wizard_topic_entry() -> tuple:
         all_names.extend(td.get("topics", {}).keys())
 
     name = smart_input("Topic name:", completions=all_names, hint=HINTS["topic_name"])
+    data = _collect_topic_data()
+    return name.lower(), data
+
+def _collect_topic_data() -> dict:
+    """Collect topic fields without asking for name. Used by both wizard paths."""
     desc = smart_input("Description:", hint=HINTS["topic_desc"])
     what = smart_input("What it does (Enter to skip):", hint=HINTS["topic_what"])
     ucs  = smart_collect_list("Use cases (one per line)", hint=HINTS["topic_uc"])
@@ -590,7 +618,7 @@ def wizard_topic_entry() -> tuple:
     if syns: data["syntax"]       = syns
     if exps: data["examples"]     = exps
     if tags: data["tags"]         = tags
-    return name.lower(), data
+    return data
 
 def open_notepad(path: Path):
     subprocess.Popen(["notepad.exe", str(path)])
@@ -647,8 +675,7 @@ def cmd_new(args):
         tname = smart_input("\n  Topic name (blank to finish):", completions=[], hint=HINTS["topic_name"])
         if not tname:
             break
-        _, tdata = wizard_topic_entry()
-        # name was re-entered inside wizard_topic_entry; use the one from here
+        tdata = _collect_topic_data()
         topics[tname.lower()] = tdata
 
     entry = {"description": desc}
@@ -1013,18 +1040,38 @@ def cmd_import(args):
         warn(f"File not found: {src}")
         return
     new_data = load_json(src)
-    tools_db = load_json(TOOLS_FILE)
-    merged   = 0
-    for key, val in new_data.items():
-        if key not in tools_db:
-            tools_db[key] = val
-            merged += 1
-        else:
-            for tname, tdata in val.get("topics", {}).items():
-                tools_db[key].setdefault("topics", {})[tname] = tdata
+    if not isinstance(new_data, dict) or not new_data:
+        warn(f"Empty or invalid JSON in {src.name}")
+        return
+
+    # Detect whether this is a snippets file (values have an "entries" key)
+    is_snippets = all(
+        isinstance(v, dict) and "entries" in v
+        for v in new_data.values()
+    )
+
+    merged = 0
+    if is_snippets:
+        snips_db = load_json(SNIP_FILE)
+        for tool, val in new_data.items():
+            snips_db.setdefault(tool, {}).setdefault("entries", {})
+            for sname, sdata in val.get("entries", {}).items():
+                snips_db[tool]["entries"][sname] = sdata
                 merged += 1
-    save_json(TOOLS_FILE, tools_db)
-    success(f"Merged {merged} entries from {src.name}")
+        save_json(SNIP_FILE, snips_db)
+        success(f"Merged {merged} snippet entries from {src.name} → snippets.json")
+    else:
+        tools_db = load_json(TOOLS_FILE)
+        for key, val in new_data.items():
+            if key not in tools_db:
+                tools_db[key] = val
+                merged += 1
+            else:
+                for tname, tdata in val.get("topics", {}).items():
+                    tools_db[key].setdefault("topics", {})[tname] = tdata
+                    merged += 1
+        save_json(TOOLS_FILE, tools_db)
+        success(f"Merged {merged} entries from {src.name} → tools.json")
 
 # ─── Prompt command ───────────────────────────────────────────────────────────
 def cmd_prompt(args):
@@ -1140,7 +1187,11 @@ def cmd_set(args):
         s = load_settings()
         header("Current Settings")
         for k, v in s.items():
-            print(c(f"    {k}", "yellow") + " = " + c(str(v), "green"))
+            state = c("ON", "green") if v else c("OFF", "dim")
+            print(c(f"    {k}", "yellow") + " = " + state)
+        print()
+        tip("devref --set hints on/off        Toggle wizard example hints")
+        tip("devref --set autocomplete on/off  Toggle prompt_toolkit autocomplete")
         print()
         return
     key, val = args[0].lower(), args[1].lower()
@@ -1150,8 +1201,17 @@ def cmd_set(args):
         save_settings(settings)
         state = "ON" if settings["hints"] else "OFF"
         success(f"Hints turned {state}. Wizard prompts will {'show' if settings['hints'] else 'hide'} examples.")
+    elif key == "autocomplete":
+        settings["autocomplete"] = (val == "on")
+        save_settings(settings)
+        state = "ON" if settings["autocomplete"] else "OFF"
+        if settings["autocomplete"] and not HAS_PT:
+            warn("Autocomplete enabled but prompt_toolkit is not installed.")
+            tip("Run:  pip install prompt_toolkit  to enable it")
+        else:
+            success(f"Autocomplete turned {state}.")
     else:
-        warn(f"Unknown setting: '{key}'. Available: hints")
+        warn(f"Unknown setting: '{key}'. Available: hints, autocomplete")
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 def main():
