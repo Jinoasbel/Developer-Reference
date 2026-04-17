@@ -6,7 +6,7 @@
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 
-; ── General Settings ──────────────────────────────────────────────────────────
+; ── General Settings ────────────────────────────────────────────────────────
 
 Name "devref"
 OutFile "devref-setup.exe"
@@ -15,10 +15,11 @@ InstallDirRegKey HKLM "Software\devref" "InstallDir"
 RequestExecutionLevel admin
 
 ; FIX-NSIS-1: Unicode true enables proper UTF-8 rendering in all NSIS pages.
-; chcp 65001 in .bat files has zero effect on the NSIS GUI window.
+; Required to properly display the '—' in Add/Remove programs.
+; IMPORTANT: Save this .nsi file as "UTF-8 with BOM" in your text editor!
 Unicode True
 
-; ── Version Info ──────────────────────────────────────────────────────────────
+; ── Version Info ────────────────────────────────────────────────────────────
 
 VIProductVersion "2.0.0.0"
 VIAddVersionKey "ProductName"    "devref"
@@ -27,13 +28,13 @@ VIAddVersionKey "CompanyName"    "devref"
 VIAddVersionKey "FileDescription" "Developer Reference CLI"
 VIAddVersionKey "LegalCopyright" "MIT"
 
-; ── MUI Interface Settings ────────────────────────────────────────────────────
+; ── MUI Interface Settings ──────────────────────────────────────────────────
 
 !define MUI_ABORTWARNING
 !define MUI_ICON    "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
 !define MUI_UNICON  "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
 
-; ── Installer Pages ───────────────────────────────────────────────────────────
+; ── Installer Pages ─────────────────────────────────────────────────────────
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "devref_guide.txt"
@@ -41,42 +42,39 @@ VIAddVersionKey "LegalCopyright" "MIT"
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
-; ── Uninstaller Pages ─────────────────────────────────────────────────────────
+; ── Uninstaller Pages ───────────────────────────────────────────────────────
 
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_UNPAGE_FINISH
 
-; ── Language ──────────────────────────────────────────────────────────────────
+; ── Language ────────────────────────────────────────────────────────────────
 
 !insertmacro MUI_LANGUAGE "English"
 
-; ── Installer Section ─────────────────────────────────────────────────────────
+; ── Installer Section ───────────────────────────────────────────────────────
 
 Section "Install" SecInstall
 
     SetOutPath "$INSTDIR"
 
-    ; ── Copy application files ────────────────────────────────────────────────
+    ; ── Copy application files ──────────────────────────────────────────────
     File "devref.exe"
     File "devref.py"
     File "devref.bat"
     File "devref_guide.txt"
 
-    ; ── Create data subdirectory and copy JSON files ──────────────────────────
+    ; ── Create data subdirectory and copy JSON files ────────────────────────
     CreateDirectory "$INSTDIR\ref"
 
-    ; FIX-NSIS-2: v2.0 renamed ref.json → tools.json and syntax.json → snippets.json.
-    ; Original script still copied the old filenames. Fixed to use new names.
-    ; Also checks for old-name files and migrates them on upgrade.
-
-    ; Migrate old ref.json → tools.json if upgrading from v1
+    ; FIX-NSIS-2: v2.0 renamed ref.json -> tools.json and syntax.json -> snippets.json.
+    ; Migrate old ref.json -> tools.json if upgrading from v1
     IfFileExists "$INSTDIR\ref\ref.json" 0 no_old_ref
         IfFileExists "$INSTDIR\ref\tools.json" no_old_ref 0
             Rename "$INSTDIR\ref\ref.json" "$INSTDIR\ref\tools.json"
     no_old_ref:
 
-    ; Migrate old syntax.json → snippets.json if upgrading from v1
+    ; Migrate old syntax.json -> snippets.json if upgrading from v1
     IfFileExists "$INSTDIR\ref\syntax.json" 0 no_old_syn
         IfFileExists "$INSTDIR\ref\snippets.json" no_old_syn 0
             Rename "$INSTDIR\ref\syntax.json" "$INSTDIR\ref\snippets.json"
@@ -89,7 +87,7 @@ Section "Install" SecInstall
     IfFileExists "$INSTDIR\ref\snippets.json" +2 0
         File "/oname=ref\snippets.json" "snippets.json"
 
-    ; ── Add to System PATH ────────────────────────────────────────────────────
+    ; ── Add to System PATH ──────────────────────────────────────────────────
     ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
 
     StrLen $1 "$INSTDIR"
@@ -113,10 +111,10 @@ Section "Install" SecInstall
     ; Broadcast environment change so open terminals pick it up
     SendMessage ${HWND_BROADCAST} ${WM_WININICHANGE} 0 "STR:Environment" /TIMEOUT=5000
 
-    ; ── Write Uninstaller ─────────────────────────────────────────────────────
+    ; ── Write Uninstaller ───────────────────────────────────────────────────
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
-    ; ── Write Registry Keys for Add/Remove Programs ──────────────────────────
+    ; ── Write Registry Keys for Add/Remove Programs ─────────────────────────
     WriteRegStr HKLM "Software\devref" "InstallDir" "$INSTDIR"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\devref" \
         "DisplayName" "devref — Developer Reference CLI"
@@ -133,14 +131,14 @@ Section "Install" SecInstall
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\devref" \
         "NoRepair" 1
 
-    ; ── Estimate installed size ───────────────────────────────────────────────
+    ; ── Estimate installed size ─────────────────────────────────────────────
     SectionGetSize ${SecInstall} $0
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\devref" \
         "EstimatedSize" $0
 
 SectionEnd
 
-; ── String Contains Function ──────────────────────────────────────────────────
+; ── String Contains Function ────────────────────────────────────────────────
 
 Function StrContains
     Exch $1 ; needle
@@ -168,18 +166,18 @@ Function StrContains
     notfound:
         StrCpy $1 ""
     done:
-    Pop $5
-    Pop $4
-    Pop $3
-    Pop $2
-    Exch $1
+        Pop $5
+        Pop $4
+        Pop $3
+        Pop $2
+        Exch $1
 FunctionEnd
 
-; ── Uninstaller Section ───────────────────────────────────────────────────────
+; ── Uninstaller Section ─────────────────────────────────────────────────────
 
 Section "Uninstall"
 
-    ; ── Remove from System PATH ───────────────────────────────────────────────
+    ; ── Remove from System PATH ─────────────────────────────────────────────
     ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
 
     Push $0
@@ -190,37 +188,36 @@ Section "Uninstall"
 
     SendMessage ${HWND_BROADCAST} ${WM_WININICHANGE} 0 "STR:Environment" /TIMEOUT=5000
 
-    ; ── Remove application files ──────────────────────────────────────────────
+    ; ── Remove application files ────────────────────────────────────────────
     Delete "$INSTDIR\devref.exe"
     Delete "$INSTDIR\devref.py"
     Delete "$INSTDIR\devref.bat"
     Delete "$INSTDIR\devref_guide.txt"
     Delete "$INSTDIR\uninstall.exe"
 
-    ; ── Remove data files ─────────────────────────────────────────────────────
-    ; FIX-NSIS-3: Uninstaller was deleting old v1 filenames (ref.json, syntax.json).
-    ; Fixed to delete v2 filenames. Also deletes old names in case of upgrade remnants.
+    ; ── Remove data files ───────────────────────────────────────────────────
     Delete "$INSTDIR\ref\tools.json"
     Delete "$INSTDIR\ref\snippets.json"
     Delete "$INSTDIR\ref\meta.json"
+    
     ; Clean up any leftover v1 files from upgrade
     Delete "$INSTDIR\ref\ref.json"
     Delete "$INSTDIR\ref\syntax.json"
     RMDir  "$INSTDIR\ref"
 
-    ; ── Remove backups directory (if exists) ──────────────────────────────────
+    ; ── Remove backups directory (if exists) ────────────────────────────────
     RMDir /r "$INSTDIR\backups"
 
-    ; ── Remove install directory ──────────────────────────────────────────────
+    ; ── Remove install directory ────────────────────────────────────────────
     RMDir "$INSTDIR"
 
-    ; ── Clean up Registry ─────────────────────────────────────────────────────
+    ; ── Clean up Registry ───────────────────────────────────────────────────
     DeleteRegKey HKLM "Software\devref"
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\devref"
 
 SectionEnd
 
-; ── Remove From Path Function (Uninstaller) ───────────────────────────────────
+; ── Remove From Path Function (Uninstaller) ─────────────────────────────────
 
 Function un.RemoveFromPath
     Exch $1 ; dir to remove
@@ -290,7 +287,7 @@ Function un.RemoveFromPath
     Exch $1
 FunctionEnd
 
-; ── StrStr for Uninstaller ────────────────────────────────────────────────────
+; ── StrStr for Uninstaller ──────────────────────────────────────────────────
 
 Function un.StrStr
     Exch $1 ; needle
@@ -319,9 +316,9 @@ Function un.StrStr
     notfound:
         StrCpy $1 ""
     done:
-    Pop $5
-    Pop $4
-    Pop $3
-    Pop $2
-    Exch $1
+        Pop $5
+        Pop $4
+        Pop $3
+        Pop $2
+        Exch $1
 FunctionEnd
