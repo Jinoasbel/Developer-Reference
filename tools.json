@@ -1,0 +1,130 @@
+{
+  "python": {
+    "description": "High-level interpreted programming language",
+    "tags": ["language", "scripting", "data"],
+    "use_cases": [
+      "Automating repetitive tasks and scripting",
+      "Data analysis, machine learning, and scientific computing",
+      "Building web applications and APIs",
+      "Writing CLI tools and automation scripts"
+    ],
+    "topics": {
+      "venv": {
+        "description": "Virtual environment to isolate project dependencies",
+        "what_it_does": "Creates a self-contained Python environment per project so packages don't conflict across projects",
+        "use_cases": [
+          "When two projects need different versions of the same package",
+          "To keep global Python installation clean",
+          "Before starting any new Python project as good practice"
+        ],
+        "syntax": [
+          "python -m venv <env-name>",
+          "<env-name>\\Scripts\\activate",
+          "deactivate"
+        ],
+        "examples": [
+          "python -m venv myenv",
+          "myenv\\Scripts\\activate",
+          "pip install requests"
+        ],
+        "tags": ["environment", "isolation", "packages"]
+      },
+      "pip": {
+        "description": "Python package installer",
+        "what_it_does": "Installs, upgrades, and removes Python packages from PyPI",
+        "use_cases": [
+          "Adding third-party libraries to a project",
+          "Recreating a project environment from requirements.txt",
+          "Upgrading or pinning a specific package version"
+        ],
+        "syntax": [
+          "pip install <package>",
+          "pip install <package>==<version>",
+          "pip uninstall <package>",
+          "pip list",
+          "pip freeze > requirements.txt",
+          "pip install -r requirements.txt"
+        ],
+        "examples": [
+          "pip install requests",
+          "pip install numpy==1.24.0",
+          "pip freeze > requirements.txt",
+          "pip install -r requirements.txt"
+        ],
+        "tags": ["packages", "install", "dependencies"]
+      },
+      "list-comprehension": {
+        "description": "Compact way to create lists using a single line expression",
+        "what_it_does": "Generates a new list by applying an expression to each item in an iterable, optionally filtering",
+        "use_cases": [
+          "Transforming every item in a list without a for-loop",
+          "Filtering a list based on a condition concisely",
+          "Replacing simple map() or filter() calls with readable code"
+        ],
+        "syntax": [
+          "[<expr> for <item> in <iterable>]",
+          "[<expr> for <item> in <iterable> if <condition>]"
+        ],
+        "examples": [
+          "[x * 2 for x in range(10)]",
+          "[x for x in range(20) if x % 2 == 0]",
+          "[name.upper() for name in ['alice', 'bob']]"
+        ],
+        "tags": ["syntax", "list", "comprehension"]
+      }
+    }
+  },
+  "git": {
+    "description": "Distributed version control system",
+    "tags": ["vcs", "version-control", "collaboration"],
+    "use_cases": [
+      "Tracking changes to source code over time",
+      "Collaborating with a team on the same codebase",
+      "Creating isolated branches for features or bug fixes",
+      "Rolling back to a previous working state"
+    ],
+    "topics": {
+      "commit": {
+        "description": "Create a snapshot of staged changes in the repository",
+        "what_it_does": "Records the staged changes permanently in the git history with a message describing what changed",
+        "use_cases": [
+          "After completing a logical unit of work",
+          "Before switching branches to save current progress",
+          "Fixing a typo in a previous commit message with --amend"
+        ],
+        "syntax": [
+          "git commit -m \"<message>\"",
+          "git commit -am \"<message>\"",
+          "git commit --amend"
+        ],
+        "examples": [
+          "git commit -m \"Add login feature\"",
+          "git commit -am \"Fix typo in readme\"",
+          "git commit --amend -m \"Corrected commit message\""
+        ],
+        "tags": ["save", "history", "snapshot"]
+      },
+      "branch": {
+        "description": "Create, list, or delete branches",
+        "what_it_does": "Branches let you work on features or fixes in isolation without affecting the main codebase",
+        "use_cases": [
+          "Starting work on a new feature without breaking main",
+          "Experimenting with changes safely",
+          "Cleaning up stale branches after merging"
+        ],
+        "syntax": [
+          "git branch <n>",
+          "git checkout -b <n>",
+          "git branch -d <n>",
+          "git branch --list"
+        ],
+        "examples": [
+          "git checkout -b feature/login",
+          "git branch --list",
+          "git branch -d feature/login"
+        ],
+        "tags": ["branch", "feature", "isolation"]
+      }
+    }
+  }
+}

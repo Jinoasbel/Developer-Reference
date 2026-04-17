@@ -1,82 +1,103 @@
-╔══════════════════════════════════════════════════════════════════╗
-║              devref  —  Complete User Guide                      ║
-║              Your Personal Developer Reference CLI               ║
-╚══════════════════════════════════════════════════════════════════╝
+=========================================================
+  devref v2.0  --  Complete User Guide
+  Your Personal Developer Reference CLI
+=========================================================
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
   HOW IT WORKS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
 
 devref stores your personal help sheets in two JSON files:
 
-  S:\devref\ref\ref.json       Topics, descriptions, examples
-  S:\devref\ref\syntax.json    Syntax cards (shorthand patterns)
+  S:\devref\ref\tools.json       Topics, use cases, descriptions
+  S:\devref\ref\snippets.json    Snippet cards (patterns + examples)
 
-You can add any tool, language, or workflow to these files.
-Everything is searchable, tagged, and retrievable from any terminal.
+Everything is searchable by topic, use case, example, or tag.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
   QUICK COMMAND REFERENCE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
 
 devref --help                            Show all commands
 devref --list                            List all tools
 
 FINDING
-  devref --find python                   Overview of python + all topics
-  devref --find python --topic venv      Full detail on venv topic
-  devref --find python --syntax          All python syntax cards
-  devref --find python --syntax f-string One syntax card
+  devref --find python                   Overview + all topics
+  devref --find python --topic venv      Full detail on venv
+  devref --find python --snippets        All python snippet cards
+  devref --find python --snippets f-string  One snippet card
 
 SEARCHING
-  devref --search "environment"          Search everywhere
-  devref --find python --search "env"    Search only inside python
+  devref --search "environment"          Search across everything
+  devref --search "environment" --tools     Search tools.json only
+  devref --search "environment" --snippets  Search snippets.json only
+
+  devref --find python --search "env"           Inside python, everything
+  devref --find python --search "env" --topics     Topics only
+  devref --find python --search "env" --snippets   Snippets only
+  devref --find python --search "env" --usecases   Use cases only
+  devref --find python --search "env" --examples   Examples only
 
 ADDING
   devref --new git                       New tool wizard (terminal)
   devref --new git --notepad             New tool template in Notepad
   devref --add git --topic               Add topic to existing tool
-  devref --add git --syntax              Add syntax entry to tool
+  devref --add git --snippets            Add snippet to tool
   devref --add git --topic --notepad     Topic template in Notepad
 
 EDITING
   devref --edit git --topic commit       Edit a topic (type name to confirm)
-  devref --edit git --syntax stash       Edit a syntax entry
+  devref --edit git --snippets stash     Edit a snippet
 
 DELETING
   devref --delete git --topic commit     Delete one topic
-  devref --delete git                    Delete entire tool entry
+  devref --delete git --snippets stash   Delete one snippet
+  devref --delete git                    Delete entire tool
 
 TAGS
   devref --tag python venv "beginner"    Tag a topic
-  devref --find --tag "beginner"         Find all beginner-tagged entries
+  devref --find --tag "beginner"         Find all tagged entries
+
+SETTINGS
+  devref --set hints on                  Show example hints in wizard
+  devref --set hints off                 Hide example hints in wizard
 
 OTHER
   devref --recent                        Last 10 lookups
-  devref --backup                        Backup JSON files with timestamp
-  devref --export python                 Export python as Markdown file
-  devref --import myfile.json            Merge external JSON into ref
+  devref --backup                        Backup files with timestamp
+  devref --export python                 Export python as Markdown
+  devref --import myfile.json            Merge external JSON into tools
 
-AI PROMPT HELPER
-  devref --prompt conda                  Print the AI prompt for conda
+AI PROMPT
+  devref --prompt conda                  Print prompts for both files
+  devref --prompt conda --tools          Prompt for tools.json only
+  devref --prompt conda --snippets       Prompt for snippets.json only
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  JSON FILE STRUCTURE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
+  JSON FILE STRUCTURES
+---------------------------------------------------------
 
-ref.json structure:
-─────────────────
+tools.json
+----------
 {
   "tool-name": {
     "description": "What this tool is",
     "tags": ["tag1", "tag2"],
+    "use_cases": [
+      "When you need to do X",
+      "As an alternative to Y when Z"
+    ],
     "topics": {
       "topic-name": {
         "description": "What this topic is about",
         "what_it_does": "Detailed explanation of behavior",
+        "use_cases": [
+          "Use this when doing X",
+          "Prefer over Y for Z reasons"
+        ],
         "syntax": [
-          "command --flag <arg>",
-          "command --other-flag"
+          "command --flag <required>",
+          "command --flag [optional]"
         ],
         "examples": [
           "concrete working example",
@@ -88,122 +109,94 @@ ref.json structure:
   }
 }
 
-syntax.json structure:
-──────────────────────
+snippets.json
+-------------
 {
   "tool-name": {
     "entries": {
-      "syntax-name": {
-        "description": "What this syntax pattern does",
+      "snippet-name": {
+        "description": "What this pattern does",
+        "use_cases": [
+          "Use when building X",
+          "Prefer over Y when Z"
+        ],
         "pattern": "command --flag <required> [optional]",
         "examples": [
-          "real example here"
+          "real example here",
+          "another concrete example"
         ]
       }
     }
   }
 }
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
   USING AI TO BULK-GENERATE HELP SHEETS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
 
 The fastest way to add a whole tool at once:
 
-STEP 1 — Run the prompt generator:
-  devref --prompt conda
+STEP 1  Run the prompt generator for the tool:
+  devref --prompt conda --tools
+  devref --prompt conda --snippets
 
-STEP 2 — Copy the printed prompt
+STEP 2  Copy the printed prompt (one at a time)
 
-STEP 3 — Paste it into Claude (claude.ai) or ChatGPT
+STEP 3  Paste into Claude (claude.ai) or ChatGPT
 
-STEP 4 — The AI will return a JSON block. Copy it.
+STEP 4  Copy the returned JSON block
 
-STEP 5 — Paste it into a .json file, e.g. conda.json
-  (Save it somewhere accessible, like your Desktop)
+STEP 5  Save it as a .json file (e.g. conda_tools.json)
 
-STEP 6 — Import it:
-  devref --import C:\Users\YourName\Desktop\conda.json
+STEP 6  Import it:
+  devref --import conda_tools.json
 
-That's it. The tool is now in your reference.
+Run the same for snippets and import that too.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  AI PROMPT TEMPLATE  (copy this and fill in <TOOL>)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
+  WIZARD HINTS
+---------------------------------------------------------
 
-You can also use this template manually without running --prompt:
+When adding entries via the wizard, devref shows grey example
+hints above each prompt so you know what format to use.
 
-────────────────────────────────────────────────────────────────────
-You are helping me build a devref entry for "<TOOL>".
+To toggle hints:
+  devref --set hints on
+  devref --set hints off
 
-devref is a personal CLI reference tool. Generate a JSON block
-that follows this exact structure:
+---------------------------------------------------------
+  INTERACTIVE AUTOCOMPLETE
+---------------------------------------------------------
 
-For ref.json (topics/help entries):
-{
-  "<TOOL>": {
-    "description": "One-line description of <TOOL>",
-    "tags": ["relevant", "tags"],
-    "topics": {
-      "topic-name": {
-        "description": "What this topic is about",
-        "what_it_does": "More detailed explanation",
-        "syntax": [
-          "command --flag",
-          "command --flag <arg>"
-        ],
-        "examples": [
-          "real example command here",
-          "another example"
-        ],
-        "tags": ["optional", "tags"]
-      }
-    }
-  }
-}
+devref uses prompt_toolkit for smart autocomplete in the wizard.
+When prompted for a topic name or tool name, start typing and
+press Tab or use arrow keys to navigate suggestions.
 
-For syntax.json (shorthand syntax cards):
-{
-  "<TOOL>": {
-    "entries": {
-      "syntax-name": {
-        "description": "What this syntax does",
-        "pattern": "command --flag <required> [optional]",
-        "examples": [
-          "real example"
-        ]
-      }
-    }
-  }
-}
+This works in Windows Terminal, PowerShell, and CMD.
 
-Please generate BOTH blocks for "<TOOL>" covering the most commonly
-used commands, topics, and syntax patterns.
-Cover at least 5 topics and 5 syntax entries.
-Output raw JSON only — no explanation, no markdown fences.
-────────────────────────────────────────────────────────────────────
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  TIPS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-• Run  devref --backup  before making large edits
-• Tags let you filter across tools (e.g. tag everything "beginner")
-• The --export command creates a .md file you can open in Obsidian,
-  Notion, or any Markdown editor
-• JSON files are plain text — you can edit them directly in any
-  text editor if you prefer (just keep valid JSON format)
-• If you break a JSON file, restore from a backup in S:\devref\backups\
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
   FILE LOCATIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
 
   S:\devref\devref.exe            The CLI tool
-  S:\devref\ref\ref.json          Your topics and help entries
-  S:\devref\ref\syntax.json       Your syntax cards
-  S:\devref\ref\meta.json         Recent history (auto-managed)
+  S:\devref\ref\tools.json        Your topics and help entries
+  S:\devref\ref\snippets.json     Your snippet cards
+  S:\devref\ref\meta.json         Settings + recent history
   S:\devref\backups\              Timestamped backups
   S:\devref\devref_guide.txt      This file
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------------
+  TIPS
+---------------------------------------------------------
+
+  - Run devref --backup before making large edits
+  - The --export command creates a .md file you can open
+    in Obsidian, Notion, or any Markdown viewer
+  - JSON files are plain text -- edit directly in any
+    editor if you prefer (keep valid JSON format)
+  - If you break a JSON file, restore from S:\devref\backups\
+  - Use tags to filter across tools (e.g. tag everything "beginner")
+  - devref --prompt generates separate prompts for tools and snippets
+    to prevent AI from getting confused by a combined structure
+
+=========================================================

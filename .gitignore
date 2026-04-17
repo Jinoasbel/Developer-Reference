@@ -215,3 +215,5 @@ chats.txt
 # devref build artifacts
 devref.exe
 devref-setup.exe
+
+claude/
