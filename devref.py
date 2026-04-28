@@ -329,7 +329,28 @@ def ask_list(label_text: str, hint: str = None) -> list:
         items.append(val)
     return items
 
-def collect_topic_data() -> dict:
+# def collect_topic_data(inner_call = 0) -> dict:
+#     desc = ask("Description:", hint=HINTS["topic_desc"])
+#     what = ask("What it does (Enter to skip):", hint=HINTS["topic_what"])
+#     ucs  = ask_list("Use cases (one per line)", hint=HINTS["topic_uc"])
+#     syns = ask_list("Syntax entries (one per line)", hint=HINTS["syntax_entry"])
+#     exps = ask_list("Examples (one per line)", hint=HINTS["example_entry"])
+#     tags_raw = ask("Tags (comma-separated, optional):", hint=HINTS["tool_tags"])
+#     tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+#     data = {"description": desc}
+#     if what: data["what_it_does"] = what
+#     if ucs:  data["use_cases"]    = ucs
+#     if syns: data["syntax"]       = syns
+#     if exps: data["examples"]     = exps
+#     if tags: data["tags"]         = tags
+#     return data
+
+def collect_topic_data(inner_call=0) -> dict:
+    if inner_call != 0:
+        # Return empty/placeholder data without asking for input
+        return {"description": ""}
+    
+    # Original behavior for inner_call == 0
     desc = ask("Description:", hint=HINTS["topic_desc"])
     what = ask("What it does (Enter to skip):", hint=HINTS["topic_what"])
     ucs  = ask_list("Use cases (one per line)", hint=HINTS["topic_uc"])
@@ -355,25 +376,25 @@ def cmd_help():
 
     section_header("FINDING TOOLS & TOPICS", "yellow")
     rows = [
-        ("devref --find <tool>",                        "Tool overview with topics"),
-        ("devref --find <tool> --topic <name>",         "Full detail on a topic"),
-        ("devref --find <tool> --tag <tag>",            "Search tags under that tool's topics"),
+        ("devref --find <tool>",                 "Tool overview + all topics"),
+        ("devref --find <tool> --topic <name>",  "Full detail on a topic"),
     ]
     for cmd_str, desc in rows:
         print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
 
     section_header("SEARCHING", "magenta")
     rows = [
-        ("devref --search <tag>",                       "Search tags across ALL tool entries")
+        ("devref --search <tag>",                 "Search tags across ALL tool entries"),
+        ("devref --find <tool> --tag <tag>",       "Search tags within one tool"),
     ]
     for cmd_str, desc in rows:
         print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
 
     section_header("ADDING CONTENT", "cyan")
     rows = [
-        ("devref --new <tool>",                         "New tool wizard (terminal)"),
-        ("devref --new <tool> --notepad",               "New tool in console editor"),
-        ("devref --add <tool> --topic <name>",          "Add topic via terminal wizard"),
+        ("devref --new <tool>",                   "New tool wizard (terminal)"),
+        ("devref --new <tool> --notepad",          "New tool in console editor"),
+        ("devref --add <tool> --topic <name>",     "Add topic via terminal wizard"),
         ("devref --add <tool> --topic <name> --notepad", "Add topic in console editor"),
     ]
     for cmd_str, desc in rows:
@@ -405,10 +426,9 @@ def cmd_help():
 
     section_header("IMPORT / EXPORT", "cyan")
     rows = [
-        ("devref --export <tool>",                              "Export tool as single JSON file"),
-        ("devref --import <file>",                              "Import a single exported JSON file"),
-        ("devref --import <file> --tool <name>",                "Import file as a new tool (named)"),
-        ("devref --import <file> --tool <name> --topic <file2>", "Create tool + add topic from file2"),
+        ("devref --export <tool>",                "Export tool as single JSON file"),
+        ("devref --import <file>",                "Import a single exported JSON file"),
+        ("devref --import <file> --tool <name> --topic", "import file as topic under tool"),
     ]
     for cmd_str, desc in rows:
         print(c(f"    {cmd_str:<54}", "green") + c(desc, "dim"))
@@ -508,8 +528,16 @@ def cmd_find(raw_args: list):
             return
         topic_data = ref_data.get("topics", {}).get(topic_name, None)
         if topic_data is None:
-            warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
-            return
+            # add this topic under the tool if it doesn't exist
+            # warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
+            warn(f"Topic '{topic_name}' not found under '{tool_key}'" )
+            warn(f"Adding '{topic_name}' as a new topic under '{tool_key}' for prompt generation...")
+
+            # create a empty topic
+            cmd_add([tool_key, "--topic", topic_name],inner_call=1)
+
+            # tool tool_query, topic topic_name 
+            # return
         cmd_prompt_topic(tool_key, topic_name, topic_data, header_entry)
         return
 
@@ -662,7 +690,8 @@ def _apply_new_tool_from_parsed(tool_key: str, parsed: dict, header_data: dict):
     tip(f"Run:  devref --find {tool_key}")
 
 # ─── Add command ──────────────────────────────────────────────────────────────
-def cmd_add(raw_args: list):
+def cmd_add(raw_args: list, inner_call=0):
+    # [tool,--topic,name]
     if not raw_args:
         warn("Usage: devref --add <tool> --topic <name>")
         return
@@ -726,7 +755,7 @@ def cmd_add(raw_args: list):
         return
 
     print(c(f"\n  Adding topic '{topic_name}' to: {tool_key.upper()}", "bright"))
-    tdata = collect_topic_data()
+    tdata = collect_topic_data(inner_call=inner_call)
     ref_data.setdefault("topics", {})[topic_name] = tdata
     header_data[tool_key].setdefault("topics", [])
     if topic_name not in header_data[tool_key]["topics"]:
@@ -734,6 +763,8 @@ def cmd_add(raw_args: list):
     save_header(header_data)
     save_tool_ref(tool_key, ref_data)
     success(f"Topic '{topic_name}' added to '{tool_key}'!")
+    if inner_call == 1 :
+        return
 
 # ─── Edit command ─────────────────────────────────────────────────────────────
 def cmd_edit(raw_args: list):
@@ -919,7 +950,7 @@ Requirements:
 - Use cases: specific and actionable
 - Multiple topics may be included in this single file — add as many topic blocks as needed
 - Output raw JSON only — no explanation, preamble or markdown fences
-- Don't use these kind of naming conventions: firstname-lastname rather use firstnamelastname 
+- dont name as "name1-name2" use this format name1name2
 """
     header(f"AI Prompt  —  {tool_display.upper()}")
     print(c(prompt_text, "white"))
@@ -988,22 +1019,37 @@ def cmd_export(raw_args: list):
     success(f"Exported to: {out}")
 
 # ─── Import command ───────────────────────────────────────────────────────────
-def cmd_import(raw_args: list):
+"""
+devref --export <tool>                                Export tool as single JSON file
+devref --import <file>                                Import a single exported JSON file
+devref --import <file> --tool <name>                  Import file as a new tool (named)
+devref --import <file> --tool <name> --topic <file2>  Create tool + add topic from file2
+"""
+
+def cmd_import(raw_args: list): # <file> --tool <name> --topic <file2>
     """
     devref --import <file>                         → auto-detect as full tool export
     devref --import <file> --tool <name>           → import file as new tool named <name>
+
     devref --import <file> --tool <name> --topic <file2>  → create tool + add topic from file2
     """
+
+    """
+    new update
+    devref --import <file>                           -> add the file as a new tool
+    devref --import <file> --tool <name> --topic     -> add the file as a topic to the existicng tool name 
+    """
     if not raw_args:
-        warn("Usage: devref --import <file>  [--tool <name>]  [--topic <file2>]")
+        warn("Usage: devref --import <file>  [--tool <name>]  [--topic]")
         return
+
 
     src_path = Path(raw_args[0])
     if not src_path.exists():
         warn(f"File not found: {src_path}")
         return
 
-    # Parse --tool <name>
+    # extract name from --tool <name>
     tool_name = None
     if "--tool" in raw_args:
         idx = raw_args.index("--tool")
@@ -1012,14 +1058,19 @@ def cmd_import(raw_args: list):
             if a.startswith("--"):
                 break
             tool_parts.append(a)
-        tool_name = normalise(" ".join(tool_parts)) if tool_parts else None
+        tool_name = normalise(" ".join(tool_parts)) if tool_parts else None # any string to spaceless and special character free lower case string
 
     # Parse --topic <file2>
-    topic_file = None
+    # topic_file = None
+    # if "--topic" in raw_args:
+    #     idx = raw_args.index("--topic")
+    #     if idx + 1 < len(raw_args) and not raw_args[idx + 1].startswith("--"):
+    #         topic_file = Path(raw_args[idx + 1])
+
+    # refactored for just --topic
+    topic = 0
     if "--topic" in raw_args:
-        idx = raw_args.index("--topic")
-        if idx + 1 < len(raw_args) and not raw_args[idx + 1].startswith("--"):
-            topic_file = Path(raw_args[idx + 1])
+        topic = 1
 
     try:
         new_data = load_json(src_path)
@@ -1033,11 +1084,16 @@ def cmd_import(raw_args: list):
 
     header_data = load_header()
 
-    if tool_name and topic_file:
+    if tool_name and topic==1:
         # Create tool from src_path; add topic(s) from topic_file
-        _import_as_new_tool(header_data, tool_name, new_data)
+        # _import_as_new_tool(header_data, tool_name, new_data)
+        # try:
+        #     topic_data = load_json(topic_file)
+        # except Exception as e:
+        #     warn(f"Could not parse topic file: {e}")
+        #     return
         try:
-            topic_data = load_json(topic_file)
+            topic_data = load_json(src_path)
         except Exception as e:
             warn(f"Could not parse topic file: {e}")
             return

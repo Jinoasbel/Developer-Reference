@@ -1,0 +1,35 @@
+changes:
+
+  Description
+    Execute a Python script file.
+
+  What it does
+    Invokes the Python interpreter to read and execute the source code
+    contained in a specified file.
+
+  Use Cases
+    → Use this when running a standalone Python application or script file.
+    → Prefer this for standard execution of your application's entry point.
+
+  Tags
+    run, execute, script, file
+
+  Syntax
+    python <file.py>
+    python <file.py> [arguments]
+
+  Examples
+    python main.py
+    python script.py --verbose output.txt
+
+    add an argument section which does something like 
+
+    --verbose >> does something 
+    --x >> does something
+
+ devref --find tool --prompt name
+
+ create a topic name and aks for prompt
+
+
+ work on the import statements   
