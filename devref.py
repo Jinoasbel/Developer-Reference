@@ -1,12 +1,14 @@
 """
-devref v2.0 - Personal Developer Reference CLI
+devref v2.1 - Personal Developer Reference CLI
 """
 
 import sys
 import os
 import json
+import re
 import datetime
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -18,40 +20,20 @@ try:
 except ImportError:
     HAS_COLOR = False
 
-try:
-    from rapidfuzz import fuzz
-    HAS_FUZZ = True
-except ImportError:
-    HAS_FUZZ = False
-
-try:
-    from prompt_toolkit import prompt as pt_prompt
-    from prompt_toolkit.completion import WordCompleter, Completer, Completion
-    from prompt_toolkit.styles import Style as PtStyle
-    from prompt_toolkit.formatted_text import HTML
-    HAS_PT = True
-except ImportError:
-    HAS_PT = False
-
 # ─── Paths ────────────────────────────────────────────────────────────────────
 if getattr(sys, 'frozen', False):
     DEVREF_DIR = Path(sys.executable).parent
 else:
     DEVREF_DIR = Path(__file__).resolve().parent
 
+SRC_DIR    = DEVREF_DIR / "src"
 REF_DIR    = DEVREF_DIR / "ref"
-TOOLS_FILE = REF_DIR / "tools.json"      # was ref.json
-SNIP_FILE  = REF_DIR / "snippets.json"   # was syntax.json
-META_FILE  = REF_DIR / "meta.json"
+HEADER_FILE = SRC_DIR / "header.json"   # master index
+NOTES_DIR  = DEVREF_DIR / "notes"       # --note files
 
-# Legacy migration: if old names exist but new don't, rename them
-def _migrate_legacy():
-    old_ref = REF_DIR / "ref.json"
-    old_syn = REF_DIR / "syntax.json"
-    if old_ref.exists() and not TOOLS_FILE.exists():
-        old_ref.rename(TOOLS_FILE)
-    if old_syn.exists() and not SNIP_FILE.exists():
-        old_syn.rename(SNIP_FILE)
+SRC_DIR.mkdir(parents=True, exist_ok=True)
+REF_DIR.mkdir(parents=True, exist_ok=True)
+NOTES_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─── Color helpers ────────────────────────────────────────────────────────────
 def c(text, color):
@@ -66,11 +48,16 @@ def c(text, color):
         "blue":    Fore.BLUE,
         "bright":  Style.BRIGHT,
         "dim":     Style.DIM,
+        "red":     Fore.RED,
     }
     return colors.get(color, "") + str(text) + Style.RESET_ALL
 
+BOX = 60
+def _center(text):
+    pad = BOX - len(text)
+    return " " * (pad // 2) + text + " " * (pad - pad // 2)
+
 def section_header(text, color="cyan"):
-    """Colored section headers inside --help"""
     print(c(f"\n  {text}", color) + c("  " + "─" * (54 - len(text)), "dim"))
 
 def header(text):
@@ -128,70 +115,144 @@ def save_json(path: Path, data: dict):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-# ─── Settings ─────────────────────────────────────────────────────────────────
-SETTINGS_DEFAULTS = {"hints": True, "autocomplete": True}
+# ─── HEX ID helpers ──────────────────────────────────────────────────────────
+def generate_hex_id() -> str:
+    """Generate a 6-digit uppercase hex ID."""
+    import random
+    return format(random.randint(0, 0xFFFFFF), '06X')
 
-def load_settings() -> dict:
-    meta = load_json(META_FILE)
-    saved = meta.get("settings", {})
-    return {**SETTINGS_DEFAULTS, **saved}
+def ids_equal(id1: str, id2: str) -> bool:
+    """IDs are equal regardless of case."""
+    return id1.upper() == id2.upper()
 
-def save_settings(settings: dict):
-    meta = load_json(META_FILE)
-    meta["settings"] = settings
-    save_json(META_FILE, meta)
+# ─── Tool name normalisation ─────────────────────────────────────────────────
+def normalise(name: str) -> str:
+    """
+    Joins all words into a single lowercase string for comparison.
+    'hello world' → 'helloworld'
+    Also strips underscores and hyphens so 'g_it' == 'git'.
+    """
+    return re.sub(r'[\s_\-]', '', name).lower()
 
-def hints_on() -> bool:
-    return load_settings().get("hints", True)
+def fuzzy_name_match(query: str, candidate: str) -> bool:
+    """
+    Match tool names case-insensitively after stripping separators.
+    'git' matches 'Git', 'G_it', 'g-it', 'GIT', etc.
+    """
+    return normalise(query) == normalise(candidate)
 
-def autocomplete_on() -> bool:
-    return load_settings().get("autocomplete", True)
+def find_tool_keys(query: str, header_data: dict) -> list:
+    """Return all tool keys in header that match query (case/separator insensitive)."""
+    matches = []
+    for key in header_data.get("tools", []):
+        if fuzzy_name_match(query, key):
+            matches.append(key)
+    return matches
 
-# ─── Recent history ───────────────────────────────────────────────────────────
-def record_recent(query: str):
-    meta = load_json(META_FILE)
-    recent = meta.get("recent", [])
-    entry = {"query": query, "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
-    recent = [r for r in recent if r["query"] != query]
-    recent.insert(0, entry)
-    meta["recent"] = recent[:20]
-    save_json(META_FILE, meta)
+# ─── Header (master index) helpers ───────────────────────────────────────────
+def load_header() -> dict:
+    data = load_json(HEADER_FILE)
+    if "tools" not in data:
+        data["tools"] = []
+    return data
 
-# ─── Autocomplete input ───────────────────────────────────────────────────────
-def smart_input(prompt_text: str, completions: list = None, hint: str = None) -> str:
-    """Input with optional autocomplete and hint display."""
-    show_hints = hints_on()
-    if show_hints and hint:
-        hint_item(hint)
+def save_header(data: dict):
+    save_json(HEADER_FILE, data)
 
-    if HAS_PT and completions and autocomplete_on():
-        completer = WordCompleter(completions, ignore_case=True)
-        pt_style = PtStyle.from_dict({"prompt": "ansiyellow bold", "": "ansiwhite"})
-        try:
-            return pt_prompt(
-                HTML(f"<prompt>  {prompt_text} </prompt>"),
-                completer=completer,
-                style=pt_style,
-                complete_while_typing=True,
-            ).strip()
-        except (KeyboardInterrupt, EOFError):
-            return ""
+def get_tool_entry(header_data: dict, tool_key: str) -> dict:
+    return header_data.get(tool_key, {})
+
+def tool_ref_path(tool_key: str) -> Path:
+    return REF_DIR / f"{tool_key}.json"
+
+def load_tool_ref(tool_key: str) -> dict:
+    return load_json(tool_ref_path(tool_key))
+
+def save_tool_ref(tool_key: str, data: dict):
+    save_json(tool_ref_path(tool_key), data)
+
+def add_tool_to_header(header_data: dict, tool_key: str, description: str, tags: list) -> str:
+    hex_id = generate_hex_id()
+    header_data.setdefault("tools", [])
+    if tool_key not in header_data["tools"]:
+        header_data["tools"].append(tool_key)
+    header_data[tool_key] = {
+        "id": hex_id,
+        "name": tool_key,
+        "tags": tags,
+        "description": description,
+        "topics": []
+    }
+    return hex_id
+
+def resolve_tool(raw_args: list) -> tuple:
+    """
+    Join all non-flag tokens before first flag into a single tool name.
+    Returns (tool_key, remaining_args).
+    'hello world --topic foo' → ('helloworld', ['--topic', 'foo'])
+    """
+    tool_parts = []
+    rest = []
+    past_flags = False
+    for a in raw_args:
+        if a.startswith("--"):
+            past_flags = True
+        if past_flags:
+            rest.append(a)
+        else:
+            tool_parts.append(a)
+    tool_key = normalise(" ".join(tool_parts)) if tool_parts else ""
+    return tool_key, rest
+
+# ─── Console editor ───────────────────────────────────────────────────────────
+def open_console_editor(initial_content: str) -> str:
+    """
+    Open a temp file in the user's preferred console editor (vim/nano/notepad).
+    Returns the saved content.
+    """
+    editors = []
+    env_editor = os.environ.get("EDITOR", "")
+    if env_editor:
+        editors.append(env_editor)
+
+    if sys.platform == "win32":
+        editors += ["notepad.exe"]
     else:
-        return input(c(f"  {prompt_text} ", "yellow")).strip()
+        editors += ["nano", "vim", "vi"]
 
-def smart_collect_list(label_text: str, hint: str = None) -> list:
-    """Collect multiple items with optional hint. Blank line finishes."""
-    show_hints = hints_on()
-    print(c(f"\n  {label_text}", "yellow") + c("  (blank line to finish)", "dim"))
-    if show_hints and hint:
-        hint_item(hint)
-    items = []
-    while True:
-        val = input(c("    > ", "cyan")).strip()
-        if not val:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
+                                     encoding="utf-8", delete=False) as f:
+        f.write(initial_content)
+        tmp_path = f.name
+
+    editor_used = None
+    for ed in editors:
+        try:
+            subprocess.call([ed, tmp_path])
+            editor_used = ed
             break
-        items.append(val)
-    return items
+        except (FileNotFoundError, OSError):
+            continue
+
+    if not editor_used:
+        warn("No console editor found. Set $EDITOR environment variable.")
+        Path(tmp_path).unlink(missing_ok=True)
+        return initial_content
+
+    with open(tmp_path, "r", encoding="utf-8") as f:
+        result = f.read()
+    Path(tmp_path).unlink(missing_ok=True)
+    return result
+
+def open_console_editor_json(initial_dict: dict) -> dict | None:
+    """Open a dict as JSON in the console editor; returns parsed result or None on error."""
+    content = json.dumps(initial_dict, indent=2, ensure_ascii=False)
+    edited = open_console_editor(content)
+    try:
+        return json.loads(edited)
+    except json.JSONDecodeError as e:
+        warn(f"Invalid JSON after editing: {e}")
+        return None
 
 # ─── Display helpers ──────────────────────────────────────────────────────────
 def display_topic(tool: str, topic: str, data: dict):
@@ -219,361 +280,25 @@ def display_topic(tool: str, topic: str, data: dict):
             example_item(e)
     print()
 
-def display_snippet_entry(tool: str, name: str, data: dict):
-    header(f"SNIPPET  {tool.upper()}  →  {name}")
-    if "description" in data:
+def display_tool_summary(tool_key: str, header_entry: dict, ref_data: dict):
+    header(f"{header_entry.get('name', tool_key).upper()}  —  Overview")
+    label("ID")
+    item(header_entry.get("id", "N/A"))
+    if header_entry.get("description"):
         label("Description")
-        item(data["description"])
-    if "use_cases" in data and data["use_cases"]:
-        label("Use Cases")
-        for u in data["use_cases"]:
-            usecase_item(u)
-    if "pattern" in data:
-        label("Pattern")
-        syntax_item(data["pattern"])
-    if "examples" in data and data["examples"]:
-        label("Examples")
-        for e in data["examples"]:
-            example_item(e)
-    print()
-
-def display_tool_summary(tool: str, data: dict):
-    header(f"{tool.upper()}  —  Overview")
-    if "description" in data:
-        label("Description")
-        item(data["description"])
-    if "use_cases" in data and data["use_cases"]:
-        label("Use Cases")
-        for u in data["use_cases"]:
-            usecase_item(u)
-    if "tags" in data and data["tags"]:
+        item(header_entry["description"])
+    if header_entry.get("tags"):
         label("Tags")
-        item(", ".join(data["tags"]))
-    topics = data.get("topics", {})
+        item(", ".join(header_entry["tags"]))
+    topics = ref_data.get("topics", {})
     if topics:
         label("Topics")
-        for t in topics:
-            desc = topics[t].get("description", "")
-            short = (desc[:58] + "…") if len(desc) > 58 else desc
+        for t, tdata in topics.items():
+            desc = tdata.get("description", "")
+            short = (desc[:55] + "…") if len(desc) > 55 else desc
             print(c(f"    • {t}", "green") + c(f"  —  {short}", "dim"))
     print()
-    tip(f"Run:  devref --find {tool} --topic <name>  to view a topic")
-    tip(f"Run:  devref --find {tool} --snippets      to view snippets")
-
-
-# ----my own -------
-BOX = 60  # inner width
-
-def _center(text):
-    pad = BOX - len(text)
-    return " " * (pad // 2) + text + " " * (pad - pad // 2)
-
-
-# ─── Help command ─────────────────────────────────────────────────────────────
-def cmd_help():
-    print()
-
-    print(c("  ╔" + "═" * BOX + "╗", "cyan"))
-    print(c("  ║", "cyan") + c(_center("devref  —  Developer Reference CLI"), "bright") + c("║", "cyan"))
-    print(c("  ║", "cyan") + c(_center("v 2.0"), "dim")                                 + c("║", "cyan"))
-    print(c("  ╚" + "═" * BOX + "╝", "cyan"))
-
-
-    # print(c("  ╔══════════════════════════════════════════════════════════╗", "cyan"))
-    # print(c("  ║", "cyan") + c("          devref  —  Developer Reference CLI          ", "bright") + c("║", "cyan"))
-    # print(c("  ║", "cyan") + c("                      v 2.0                           ", "dim") + c("║", "cyan"))
-    # print(c("  ╚══════════════════════════════════════════════════════════╝", "cyan"))
-
-    section_header("FINDING CONTENT", "yellow")
-    rows = [
-        ("devref --find <tool>",                  "Tool overview + all topics"),
-        ("devref --find <tool> --topic <name>",   "Full detail on a topic"),
-        ("devref --find <tool> --snippets",        "List all snippet entries"),
-        ("devref --find <tool> --snippets <name>", "Show one snippet entry"),
-        ("devref --find --tag <tag>",              "Find all entries with tag"),
-    ]
-    for cmd_str, desc in rows:
-        print(c(f"    {cmd_str:<42}", "green") + c(desc, "dim"))
-
-    section_header("SEARCHING", "magenta")
-    rows = [
-        ("devref --search \"<text>\"",                     "Search across everything"),
-        ("devref --search \"<text>\" --tools",             "Search tools file only"),
-        ("devref --search \"<text>\" --snippets",          "Search snippets file only"),
-        ("devref --find <tool> --search \"<text>\"",       "Search within one tool"),
-        ("devref --find <tool> --search \"<text>\" --topics",    "Search topics only"),
-        ("devref --find <tool> --search \"<text>\" --snippets",  "Search snippets only"),
-        ("devref --find <tool> --search \"<text>\" --usecases",  "Search use cases only"),
-        ("devref --find <tool> --search \"<text>\" --examples",  "Search examples only"),
-    ]
-    for cmd_str, desc in rows:
-        print(c(f"    {cmd_str:<50}", "green") + c(desc, "dim"))
-
-    section_header("ADDING CONTENT", "cyan")
-    rows = [
-        ("devref --new <tool>",                   "New tool wizard (terminal)"),
-        ("devref --new <tool> --notepad",          "New tool template in Notepad"),
-        ("devref --add <tool> --topic",            "Add topic to existing tool"),
-        ("devref --add <tool> --snippets",         "Add snippet to existing tool"),
-        ("devref --add <tool> --topic --notepad",  "Topic template in Notepad"),
-    ]
-    for cmd_str, desc in rows:
-        print(c(f"    {cmd_str:<42}", "green") + c(desc, "dim"))
-
-    section_header("EDITING & DELETING", "yellow")
-    rows = [
-        ("devref --edit <tool> --topic <name>",    "Edit topic (type name to confirm)"),
-        ("devref --edit <tool> --snippets <name>", "Edit a snippet entry"),
-        ("devref --delete <tool>",                 "Delete entire tool entry"),
-        ("devref --delete <tool> --topic <name>",  "Delete one topic"),
-        ("devref --delete <tool> --snippets <n>",  "Delete one snippet"),
-    ]
-    for cmd_str, desc in rows:
-        print(c(f"    {cmd_str:<44}", "green") + c(desc, "dim"))
-
-    section_header("TAGS", "blue")
-    rows = [
-        ("devref --tag <tool> <topic> \"<tag>\"",  "Tag a topic"),
-        ("devref --find --tag \"<tag>\"",           "Find all entries with tag"),
-    ]
-    for cmd_str, desc in rows:
-        print(c(f"    {cmd_str:<42}", "green") + c(desc, "dim"))
-
-    section_header("AI PROMPT", "magenta")
-    rows = [
-        ("devref --prompt <tool>",           "Prompt for both files"),
-        ("devref --prompt <tool> --tools",   "Prompt for tools.json only"),
-        ("devref --prompt <tool> --snippets","Prompt for snippets.json only"),
-    ]
-    for cmd_str, desc in rows:
-        print(c(f"    {cmd_str:<42}", "green") + c(desc, "dim"))
-
-    section_header("SETTINGS & UTILS", "cyan")
-    rows = [
-        ("devref --set hints on/off",        "Toggle wizard example hints"),
-        ("devref --set autocomplete on/off",  "Toggle prompt_toolkit autocomplete"),
-        ("devref --set",                      "Show current settings"),
-        ("devref --list",                     "List all tools in reference"),
-        ("devref --recent",                   "Show last 10 lookups"),
-        ("devref --backup",                   "Backup JSON files (timestamped)"),
-        ("devref --export <tool>",            "Export tool as Markdown"),
-        ("devref --import <file>",            "Merge JSON (auto-detects tools/snippets)"),
-        ("devref --help",                     "Show this help"),
-    ]
-    for cmd_str, desc in rows:
-        print(c(f"    {cmd_str:<44}", "green") + c(desc, "dim"))
-    print()
-
-# ─── Find command ─────────────────────────────────────────────────────────────
-def cmd_find(args):
-    tool = args[0].lower() if args else None
-    if not tool:
-        warn("Usage: devref --find <tool>")
-        return
-
-    tools = load_json(TOOLS_FILE)
-    snips = load_json(SNIP_FILE)
-
-    # --find python --snippets [name]
-    if "--snippets" in args:
-        idx = args.index("--snippets")
-        snip_name = args[idx + 1] if idx + 1 < len(args) and not args[idx+1].startswith("--") else None
-        tool_snips = snips.get(tool, {}).get("entries", {})
-        if not tool_snips:
-            warn(f"No snippets found for '{tool}'.")
-            return
-        if snip_name:
-            key = snip_name.lower()
-            if key in tool_snips:
-                record_recent(f"--find {tool} --snippets {key}")
-                display_snippet_entry(tool, key, tool_snips[key])
-            else:
-                warn(f"Snippet '{snip_name}' not found under '{tool}'.")
-                tip(f"Run:  devref --find {tool} --snippets  to see all")
-        else:
-            record_recent(f"--find {tool} --snippets")
-            header(f"{tool.upper()}  —  Snippets")
-            for name, entry in tool_snips.items():
-                desc = entry.get("description", "")
-                short = (desc[:58] + "…") if len(desc) > 58 else desc
-                print(c(f"    • {name}", "green") + c(f"  —  {short}", "dim"))
-            print()
-            tip(f"Run:  devref --find {tool} --snippets <name>  for details")
-        return
-
-    # --find python --search "text" [--topics|--snippets|--usecases|--examples]
-    if "--search" in args:
-        idx = args.index("--search")
-        query = args[idx + 1] if idx + 1 < len(args) else ""
-        query = query.strip('"\'')
-        # Determine sub-scope
-        sub_scope = None
-        for flag in ("--topics", "--snippets", "--usecases", "--examples"):
-            if flag in args:
-                sub_scope = flag.lstrip("-")
-                break
-        cmd_search([query], scope=tool, sub_scope=sub_scope)
-        return
-
-    # --find python --topic [name]
-    if "--topic" in args:
-        idx = args.index("--topic")
-        topic_name = args[idx + 1] if idx + 1 < len(args) and not args[idx+1].startswith("--") else None
-        tool_data = tools.get(tool)
-        if not tool_data:
-            warn(f"No reference found for '{tool}'.")
-            tip("Run:  devref --new " + tool + "  to create one")
-            return
-        if topic_name:
-            topics = tool_data.get("topics", {})
-            key = topic_name.lower()
-            if key in topics:
-                record_recent(f"--find {tool} --topic {key}")
-                display_topic(tool, key, topics[key])
-            else:
-                warn(f"Topic '{topic_name}' not found under '{tool}'.")
-                tip(f"Run:  devref --find {tool}  to see all topics")
-        else:
-            record_recent(f"--find {tool}")
-            display_tool_summary(tool, tool_data)
-        return
-
-    # --find python (plain)
-    tool_data = tools.get(tool)
-    if not tool_data:
-        warn(f"No tools entry found for '{tool}'.")
-        tip("Run:  devref --new " + tool + "  to create one")
-        return
-    record_recent(f"--find {tool}")
-    display_tool_summary(tool, tool_data)
-
-# ─── Search command ───────────────────────────────────────────────────────────
-def cmd_search(args, scope=None, sub_scope=None):
-    """
-    scope     = tool name (search only inside that tool)
-    sub_scope = "topics" | "snippets" | "usecases" | "examples"
-                or None = search everything
-    File-level flags: --tools, --snippets (no scope)
-    """
-    # Parse args for file-level scope flags
-    file_scope = None  # "tools" | "snippets" | None
-    clean_args = []
-    for a in args:
-        if a == "--tools":
-            file_scope = "tools"
-        elif a == "--snippets" and scope is None:
-            file_scope = "snippets"
-        else:
-            clean_args.append(a)
-    args = clean_args
-
-    query = args[0].strip('"\'') if args else ""
-    if not query:
-        warn('Usage: devref --search "<text>"')
-        return
-
-    tools_db = load_json(TOOLS_FILE)
-    snips_db = load_json(SNIP_FILE)
-
-    results = []
-
-    all_tool_names = list(dict.fromkeys(list(tools_db.keys()) + list(snips_db.keys())))
-    target_tools = [scope] if scope else all_tool_names
-
-    def fuzzy(blob: str) -> int:
-        if HAS_FUZZ:
-            return fuzz.partial_ratio(query.lower(), blob.lower())
-        return 100 if query.lower() in blob.lower() else 0
-
-    for tool in target_tools:
-        # ── Search tools.json topics
-        if file_scope in (None, "tools"):
-            tool_data = tools_db.get(tool, {})
-            for tname, tdata in tool_data.get("topics", {}).items():
-
-                if sub_scope in (None, "topics"):
-                    blob = " ".join([tname, tdata.get("description",""), tdata.get("what_it_does",""), " ".join(tdata.get("tags",[]))])
-                    sc = fuzzy(blob)
-                    if sc >= 60:
-                        results.append((sc, "topic", tool, tname, tdata.get("description","")))
-
-                if sub_scope in (None, "usecases"):
-                    for uc in tdata.get("use_cases", []):
-                        sc = fuzzy(uc)
-                        if sc >= 60:
-                            results.append((sc, "usecase", tool, tname, uc))
-
-                if sub_scope in (None, "examples"):
-                    for ex in tdata.get("examples", []):
-                        sc = fuzzy(ex)
-                        if sc >= 60:
-                            results.append((sc, "example", tool, tname, ex))
-
-        # ── Search snippets.json
-        if file_scope in (None, "snippets"):
-            for sname, sdata in snips_db.get(tool, {}).get("entries", {}).items():
-
-                if sub_scope in (None, "snippets"):
-                    blob = " ".join([sname, sdata.get("description",""), sdata.get("pattern","")])
-                    sc = fuzzy(blob)
-                    if sc >= 60:
-                        results.append((sc, "snippet", tool, sname, sdata.get("description","")))
-
-                if sub_scope in (None, "usecases"):
-                    for uc in sdata.get("use_cases", []):
-                        sc = fuzzy(uc)
-                        if sc >= 60:
-                            results.append((sc, "snippet-usecase", tool, sname, uc))
-
-                if sub_scope in (None, "examples"):
-                    for ex in sdata.get("examples", []):
-                        sc = fuzzy(ex)
-                        if sc >= 60:
-                            results.append((sc, "snippet-example", tool, sname, ex))
-
-    # Deduplicate by (type, tool, name)
-    seen = set()
-    unique = []
-    for r in results:
-        key = (r[1], r[2], r[3])
-        if key not in seen:
-            seen.add(key)
-            unique.append(r)
-    results = sorted(unique, key=lambda x: x[0], reverse=True)
-
-    if not results:
-        warn(f"No results for '{query}'.")
-        return
-
-    scope_label = ""
-    if scope:     scope_label += f"  in:{scope}"
-    if sub_scope: scope_label += f"  [{sub_scope}]"
-    if file_scope:scope_label += f"  [file:{file_scope}]"
-
-    header(f'Search: "{query}"' + scope_label)
-
-    kind_colors = {
-        "topic":          "cyan",
-        "usecase":        "blue",
-        "example":        "magenta",
-        "snippet":        "green",
-        "snippet-usecase":"blue",
-        "snippet-example":"magenta",
-    }
-
-    for score, kind, tool_name, name, desc in results:
-        short = (desc[:55] + "…") if len(desc) > 55 else desc
-        kc = kind_colors.get(kind, "white")
-        print(
-            c(f"    {tool_name}", "yellow") + " → " +
-            c(name, "green") +
-            c(f"  [{kind}]", kc) +
-            c(f"  {score}%", "dim")
-        )
-        if short:
-            print(c(f"        {short}", "dim"))
-    print()
-    tip("devref --find <tool> --topic <name>  or  --snippets <name>  to view")
+    tip(f"Run:  devref --find {tool_key} --topic <name>  to view a topic")
 
 # ─── Wizard helpers ───────────────────────────────────────────────────────────
 HINTS = {
@@ -585,33 +310,33 @@ HINTS = {
     "topic_uc":     "Isolate packages per project  /  Avoid version conflicts",
     "syntax_entry": "python -m venv <env-name>",
     "example_entry":"python -m venv myenv",
-    "snip_name":    "f-string  or  lambda  or  try-except",
-    "snip_desc":    "Format strings with embedded expressions",
-    "snip_pattern": 'f"text {<variable>} text"',
-    "snip_uc":      "Build readable log messages  /  Format user-facing output",
 }
 
-def wizard_topic_entry() -> tuple:
-    """Returns (name, data) for one topic."""
-    tools_db = load_json(TOOLS_FILE)
-    all_names = []
-    for td in tools_db.values():
-        all_names.extend(td.get("topics", {}).keys())
+def ask(prompt_text: str, hint: str = None) -> str:
+    if hint:
+        hint_item(hint)
+    return input(c(f"  {prompt_text} ", "yellow")).strip()
 
-    name = smart_input("Topic name:", completions=all_names, hint=HINTS["topic_name"])
-    data = _collect_topic_data()
-    return name.lower(), data
+def ask_list(label_text: str, hint: str = None) -> list:
+    print(c(f"\n  {label_text}", "yellow") + c("  (blank line to finish)", "dim"))
+    if hint:
+        hint_item(hint)
+    items = []
+    while True:
+        val = input(c("    > ", "cyan")).strip()
+        if not val:
+            break
+        items.append(val)
+    return items
 
-def _collect_topic_data() -> dict:
-    """Collect topic fields without asking for name. Used by both wizard paths."""
-    desc = smart_input("Description:", hint=HINTS["topic_desc"])
-    what = smart_input("What it does (Enter to skip):", hint=HINTS["topic_what"])
-    ucs  = smart_collect_list("Use cases (one per line)", hint=HINTS["topic_uc"])
-    syns = smart_collect_list("Syntax entries (one per line)", hint=HINTS["syntax_entry"])
-    exps = smart_collect_list("Examples (one per line)", hint=HINTS["example_entry"])
-    tags_raw = smart_input("Tags (comma-separated, optional):", hint=HINTS["tool_tags"])
+def collect_topic_data() -> dict:
+    desc = ask("Description:", hint=HINTS["topic_desc"])
+    what = ask("What it does (Enter to skip):", hint=HINTS["topic_what"])
+    ucs  = ask_list("Use cases (one per line)", hint=HINTS["topic_uc"])
+    syns = ask_list("Syntax entries (one per line)", hint=HINTS["syntax_entry"])
+    exps = ask_list("Examples (one per line)", hint=HINTS["example_entry"])
+    tags_raw = ask("Tags (comma-separated, optional):", hint=HINTS["tool_tags"])
     tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
-
     data = {"description": desc}
     if what: data["what_it_does"] = what
     if ucs:  data["use_cases"]    = ucs
@@ -620,602 +345,839 @@ def _collect_topic_data() -> dict:
     if tags: data["tags"]         = tags
     return data
 
-def open_notepad(path: Path):
-    subprocess.Popen(["notepad.exe", str(path)])
-    tip(f"Opened in Notepad: {path}")
-    tip("Save and close, then run:  devref --import <path>")
+# ─── Help command ─────────────────────────────────────────────────────────────
+def cmd_help():
+    print()
+    print(c("  ╔" + "═" * BOX + "╗", "cyan"))
+    print(c("  ║", "cyan") + c(_center("devref  —  Developer Reference CLI"), "bright") + c("║", "cyan"))
+    print(c("  ║", "cyan") + c(_center("v 2.1"), "dim")                                  + c("║", "cyan"))
+    print(c("  ╚" + "═" * BOX + "╝", "cyan"))
+
+    section_header("FINDING TOOLS & TOPICS", "yellow")
+    rows = [
+        ("devref --find <tool>",                        "Tool overview with topics"),
+        ("devref --find <tool> --topic <name>",         "Full detail on a topic"),
+        ("devref --find <tool> --tag <tag>",            "Search tags under that tool's topics"),
+    ]
+    for cmd_str, desc in rows:
+        print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
+
+    section_header("SEARCHING", "magenta")
+    rows = [
+        ("devref --search <tag>",                       "Search tags across ALL tool entries")
+    ]
+    for cmd_str, desc in rows:
+        print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
+
+    section_header("ADDING CONTENT", "cyan")
+    rows = [
+        ("devref --new <tool>",                         "New tool wizard (terminal)"),
+        ("devref --new <tool> --notepad",               "New tool in console editor"),
+        ("devref --add <tool> --topic <name>",          "Add topic via terminal wizard"),
+        ("devref --add <tool> --topic <name> --notepad", "Add topic in console editor"),
+    ]
+    for cmd_str, desc in rows:
+        print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
+
+    section_header("EDITING", "yellow")
+    rows = [
+        ("devref --edit <tool>",                  "Edit tool name/description/tags"),
+        ("devref --edit <tool> --topic <name>",   "Edit a topic in console editor"),
+    ]
+    for cmd_str, desc in rows:
+        print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
+
+    section_header("DELETING", "red")
+    rows = [
+        ("devref --del <tool>",                   "Delete entire tool entry"),
+        ("devref --del <tool> --topic <name>",    "Delete one topic"),
+    ]
+    for cmd_str, desc in rows:
+        print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
+
+    section_header("AI PROMPT", "magenta")
+    rows = [
+        ("devref --prompt <tool>",                "Generate prompt for entire tool"),
+        ("devref --find <tool> --prompt <topic>", "Generate prompt for one topic"),
+    ]
+    for cmd_str, desc in rows:
+        print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
+
+    section_header("IMPORT / EXPORT", "cyan")
+    rows = [
+        ("devref --export <tool>",                              "Export tool as single JSON file"),
+        ("devref --import <file>",                              "Import a single exported JSON file"),
+        ("devref --import <file> --tool <name>",                "Import file as a new tool (named)"),
+        ("devref --import <file> --tool <name> --topic <file2>", "Create tool + add topic from file2"),
+    ]
+    for cmd_str, desc in rows:
+        print(c(f"    {cmd_str:<54}", "green") + c(desc, "dim"))
+
+    section_header("NOTES", "blue")
+    rows = [
+        ("devref --note",                         "List all notes"),
+        ("devref --note <name>",                  "Open/create note in console editor"),
+        ("devref --note <name> --del",            "Delete a note"),
+    ]
+    for cmd_str, desc in rows:
+        print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
+
+    section_header("UTILS", "cyan")
+    rows = [
+        ("devref --list",                         "List all tools in reference"),
+        ("devref --help",                         "Show this help"),
+    ]
+    for cmd_str, desc in rows:
+        print(c(f"    {cmd_str:<46}", "green") + c(desc, "dim"))
+    print()
+
+# ─── Find command ─────────────────────────────────────────────────────────────
+def cmd_find(raw_args: list):
+    if not raw_args:
+        warn("Usage: devref --find <tool>")
+        return
+
+    tool_query, rest = resolve_tool(raw_args)
+    if not tool_query:
+        warn("Usage: devref --find <tool>")
+        return
+
+    header_data = load_header()
+    matches = find_tool_keys(tool_query, header_data)
+
+    # ── Multiple matches (e.g. 'git' and 'Git' both exist)
+    if len(matches) > 1:
+        header("Multiple tools matched")
+        for key in matches:
+            entry = header_data[key]
+            print()
+            print(c(f"    ID: {entry.get('id','?')}", "yellow"))
+            print(c(f"    {entry.get('name', key)}", "bright"))
+            desc = entry.get("description", "")
+            if desc:
+                print(c(f"      {desc}", "dim"))
+        print()
+        tip("Use  devref --find <tool> --id <hex>  to select one specifically")
+        return
+
+    if not matches:
+        warn(f"No tool found matching '{tool_query}'.")
+        tip(f"Run:  devref --new {tool_query}  to create one")
+        return
+
+    tool_key = matches[0]
+    header_entry = header_data[tool_key]
+    ref_data = load_tool_ref(tool_key)
+
+    # --find <tool> --tag <tag>  →  search tags within that tool's topics
+    if "--tag" in rest:
+        idx = rest.index("--tag")
+        tag_parts = []
+        for a in rest[idx + 1:]:
+            if a.startswith("--"):
+                break
+            tag_parts.append(a)
+        tag = normalise(" ".join(tag_parts))
+        if not tag:
+            warn("Provide a tag name.")
+            return
+        header(f"{tool_key.upper()}  —  Topics tagged '{tag}'")
+        found = False
+        for tname, tdata in ref_data.get("topics", {}).items():
+            topic_tags = [normalise(t) for t in tdata.get("tags", [])]
+            if tag in topic_tags:
+                desc = tdata.get("description", "")
+                print(c(f"    • {tname}", "green") + c(f"  —  {desc[:55]}", "dim"))
+                found = True
+        if not found:
+            warn(f"No topics tagged '{tag}' under '{tool_key}'.")
+        print()
+        return
+
+    # --find <tool> --prompt <topic>
+    if "--prompt" in rest:
+        idx = rest.index("--prompt")
+        topic_parts = []
+        for a in rest[idx + 1:]:
+            if a.startswith("--"):
+                break
+            topic_parts.append(a)
+        topic_name = normalise(" ".join(topic_parts))
+        if not topic_name:
+            warn("Provide a topic name: devref --find <tool> --prompt <topic>")
+            return
+        topic_data = ref_data.get("topics", {}).get(topic_name, None)
+        if topic_data is None:
+            warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
+            return
+        cmd_prompt_topic(tool_key, topic_name, topic_data, header_entry)
+        return
+
+    # --find <tool> --topic <name>
+    if "--topic" in rest:
+        idx = rest.index("--topic")
+        topic_parts = []
+        for a in rest[idx + 1:]:
+            if a.startswith("--"):
+                break
+            topic_parts.append(a)
+        topic_name = normalise(" ".join(topic_parts))
+        if topic_name:
+            topics = ref_data.get("topics", {})
+            if topic_name in topics:
+                display_topic(tool_key, topic_name, topics[topic_name])
+            else:
+                warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
+                tip(f"Run:  devref --find {tool_key}  to see all topics")
+        else:
+            display_tool_summary(tool_key, header_entry, ref_data)
+        return
+
+    # Plain --find <tool>
+    display_tool_summary(tool_key, header_entry, ref_data)
+
+# ─── Search (tag-based) ───────────────────────────────────────────────────────
+def cmd_search(raw_args: list):
+    """devref --search <tag>  — search tags across all tools."""
+    tag_parts = [a for a in raw_args if not a.startswith("--")]
+    tag = normalise(" ".join(tag_parts))
+    if not tag:
+        warn('Usage: devref --search <tag>')
+        return
+
+    header_data = load_header()
+    header(f'Tag search: "{tag}"')
+    found = False
+    for tool_key in header_data.get("tools", []):
+        ref_data = load_tool_ref(tool_key)
+        tool_entry = header_data.get(tool_key, {})
+        # Check tool-level tags
+        tool_tags = [normalise(t) for t in tool_entry.get("tags", [])]
+        if tag in tool_tags:
+            print(c(f"    {tool_key}", "yellow") + c("  [tool tag]", "dim"))
+            found = True
+        # Check topic-level tags
+        for tname, tdata in ref_data.get("topics", {}).items():
+            topic_tags = [normalise(t) for t in tdata.get("tags", [])]
+            if tag in topic_tags:
+                print(c(f"    {tool_key}", "yellow") + " → " + c(tname, "green") + c("  [topic tag]", "dim"))
+                found = True
+    if not found:
+        warn(f"No entries tagged '{tag}'.")
+    print()
 
 # ─── New command ──────────────────────────────────────────────────────────────
-def cmd_new(args):
-    if not args:
+def cmd_new(raw_args: list):
+    if not raw_args:
         warn("Usage: devref --new <tool>")
         return
 
-    tools_db = load_json(TOOLS_FILE)
-    all_tool_names = sorted(tools_db.keys())
+    tool_query, rest = resolve_tool(raw_args)
+    use_notepad = "--notepad" in rest
 
-    tool = args[0].lower()
-    use_notepad = "--notepad" in args
-
-    if tool in tools_db:
-        warn(f"'{tool}' already exists. Use  devref --add {tool} --topic  instead.")
+    if not tool_query:
+        warn("Usage: devref --new <tool>")
         return
+
+    header_data = load_header()
+    existing = find_tool_keys(tool_query, header_data)
+    if existing:
+        warn(f"'{tool_query}' already exists. Use  devref --add {tool_query} --topic <name>  instead.")
+        return
+
+    tool_key = tool_query  # normalised name used as key
 
     if use_notepad:
-        template = {tool: {
-            "description": "Describe this tool here",
-            "tags": ["tag1"],
-            "use_cases": ["When you need to do X", "As an alternative to Y"],
+        # Build template matching the new json syntax
+        template = {
+            "id": generate_hex_id(),
+            "name": tool_key,
             "topics": {
                 "example-topic": {
+                    "name": "example-topic",
+                    "tags": ["tag1"],
                     "description": "What this topic is about",
                     "what_it_does": "Detailed explanation",
-                    "use_cases": ["Use when doing X"],
-                    "syntax": ["command --flag"],
-                    "examples": ["command --flag value"],
-                    "tags": []
+                    "syntax": ["command --flag <required>"],
+                    "examples": ["command --flag value"]
                 }
             }
-        }}
-        tmp = REF_DIR / f"_new_{tool}.json"
-        save_json(tmp, template)
-        open_notepad(tmp)
-        tip(f"After editing, run:  devref --import {tmp}")
+        }
+        content = json.dumps(template, indent=2, ensure_ascii=False)
+        edited = open_console_editor(content)
+        try:
+            parsed = json.loads(edited)
+        except json.JSONDecodeError as e:
+            warn(f"Invalid JSON: {e}")
+            return
+        _apply_new_tool_from_parsed(tool_key, parsed, header_data)
         return
 
-    print(c(f"\n  Creating new tool: {tool.upper()}", "bright"))
-    desc     = smart_input("Tool description:", hint=HINTS["tool_desc"])
-    ucs      = smart_collect_list("Tool-level use cases (one per line)", hint=HINTS["topic_uc"])
-    tags_raw = smart_input("Tags (comma-separated):", hint=HINTS["tool_tags"])
+    # Terminal wizard
+    print(c(f"\n  Creating new tool: {tool_key.upper()}", "bright"))
+    desc     = ask("Tool description:", hint=HINTS["tool_desc"])
+    tags_raw = ask("Tags (comma-separated):", hint=HINTS["tool_tags"])
     tags     = [t.strip() for t in tags_raw.split(",") if t.strip()]
 
-    topics = {}
+    hex_id = add_tool_to_header(header_data, tool_key, desc, tags)
+    ref_data = {"id": hex_id, "name": tool_key, "topics": {}}
+
     print(c("\n  Now add topics. Blank topic name to finish.", "cyan"))
     while True:
-        tname = smart_input("\n  Topic name (blank to finish):", completions=[], hint=HINTS["topic_name"])
-        if not tname:
+        tname_raw = ask("\n  Topic name (blank to finish):", hint=HINTS["topic_name"])
+        if not tname_raw:
             break
-        tdata = _collect_topic_data()
-        topics[tname.lower()] = tdata
+        tname = normalise(tname_raw)
+        tdata = collect_topic_data()
+        ref_data["topics"][tname] = tdata
+        header_data[tool_key]["topics"].append(tname)
 
-    entry = {"description": desc}
-    if ucs:    entry["use_cases"] = ucs
-    if tags:   entry["tags"]      = tags
-    if topics: entry["topics"]    = topics
+    save_header(header_data)
+    save_tool_ref(tool_key, ref_data)
+    success(f"'{tool_key}' added!")
+    tip(f"Run:  devref --find {tool_key}")
 
-    tools_db[tool] = entry
-    save_json(TOOLS_FILE, tools_db)
-    success(f"'{tool}' added to tools.json!")
-    tip(f"Run:  devref --find {tool}")
+def _apply_new_tool_from_parsed(tool_key: str, parsed: dict, header_data: dict):
+    """Save a new tool from a parsed dict (notepad flow)."""
+    desc = parsed.get("description", "")
+    tags = parsed.get("tags", [])
+    topics_dict = parsed.get("topics", {})
+    topic_keys = list(topics_dict.keys())
+    hex_id = parsed.get("id") or generate_hex_id()
+
+    header_data.setdefault("tools", [])
+    if tool_key not in header_data["tools"]:
+        header_data["tools"].append(tool_key)
+    header_data[tool_key] = {
+        "id": hex_id,
+        "name": tool_key,
+        "tags": tags,
+        "description": desc,
+        "topics": topic_keys
+    }
+    ref_data = {"id": hex_id, "name": tool_key, "topics": topics_dict}
+    save_header(header_data)
+    save_tool_ref(tool_key, ref_data)
+    success(f"'{tool_key}' created from editor!")
+    tip(f"Run:  devref --find {tool_key}")
 
 # ─── Add command ──────────────────────────────────────────────────────────────
-def cmd_add(args):
-    if len(args) < 2:
-        warn("Usage: devref --add <tool> --topic  OR  devref --add <tool> --snippets")
+def cmd_add(raw_args: list):
+    if not raw_args:
+        warn("Usage: devref --add <tool> --topic <name>")
         return
-    tool = args[0].lower()
-    use_notepad = "--notepad" in args
 
-    if "--topic" in args:
-        tools_db = load_json(TOOLS_FILE)
-        if tool not in tools_db:
-            warn(f"'{tool}' not found. Run  devref --new {tool}  first.")
-            return
-        if use_notepad:
-            template = {"example-topic": {
+    tool_query, rest = resolve_tool(raw_args)
+    use_notepad = "--notepad" in rest
+
+    header_data = load_header()
+    matches = find_tool_keys(tool_query, header_data)
+    if not matches:
+        warn(f"'{tool_query}' not found. Run  devref --new {tool_query}  first.")
+        return
+    tool_key = matches[0]
+
+    if "--topic" not in rest:
+        warn("Usage: devref --add <tool> --topic <name>")
+        return
+
+    idx = rest.index("--topic")
+    topic_parts = []
+    for a in rest[idx + 1:]:
+        if a.startswith("--"):
+            break
+        topic_parts.append(a)
+    topic_name = normalise(" ".join(topic_parts))
+
+    if not topic_name:
+        warn("Provide a topic name: devref --add <tool> --topic <name>")
+        return
+
+    ref_data = load_tool_ref(tool_key)
+
+    if use_notepad:
+        template = {
+            topic_name: {
+                "name": topic_name,
+                "tags": [],
                 "description": "What this topic is about",
                 "what_it_does": "Detailed explanation",
-                "use_cases": ["When to use this"],
-                "syntax": ["command --flag"],
-                "examples": ["command --flag value"],
-                "tags": []
-            }}
-            tmp = REF_DIR / f"_add_{tool}_topic.json"
-            save_json(tmp, template)
-            open_notepad(tmp)
-            return
-        print(c(f"\n  Adding topic to: {tool.upper()}", "bright"))
-        name, data = wizard_topic_entry()
-        tools_db[tool].setdefault("topics", {})[name] = data
-        save_json(TOOLS_FILE, tools_db)
-        success(f"Topic '{name}' added to '{tool}'!")
-
-    elif "--snippets" in args:
-        snips_db = load_json(SNIP_FILE)
-        if use_notepad:
-            template = {"example-pattern": {
-                "description": "What this snippet does",
-                "use_cases": ["When to use this pattern"],
-                "pattern": "command --flag <arg>",
+                "syntax": ["command --flag <required>"],
                 "examples": ["command --flag value"]
-            }}
-            tmp = REF_DIR / f"_add_{tool}_snip.json"
-            save_json(tmp, template)
-            open_notepad(tmp)
+            }
+        }
+        content = json.dumps(template, indent=2, ensure_ascii=False)
+        edited = open_console_editor(content)
+        try:
+            parsed = json.loads(edited)
+        except json.JSONDecodeError as e:
+            warn(f"Invalid JSON: {e}")
             return
-        print(c(f"\n  Adding snippet to: {tool.upper()}", "bright"))
-        name = smart_input("Snippet name:", hint=HINTS["snip_name"])
-        desc = smart_input("Description:", hint=HINTS["snip_desc"])
-        ucs  = smart_collect_list("Use cases (one per line)", hint=HINTS["snip_uc"])
-        pat  = smart_input("Pattern:", hint=HINTS["snip_pattern"])
-        exps = smart_collect_list("Examples (one per line)", hint=HINTS["example_entry"])
 
-        entry = {"description": desc}
-        if ucs:  entry["use_cases"] = ucs
-        if pat:  entry["pattern"]   = pat
-        if exps: entry["examples"]  = exps
+        # parsed may contain one or more topics
+        for tname, tdata in parsed.items():
+            norm = normalise(tname)
+            ref_data.setdefault("topics", {})[norm] = tdata
+            if norm not in header_data[tool_key].get("topics", []):
+                header_data[tool_key].setdefault("topics", []).append(norm)
+        save_header(header_data)
+        save_tool_ref(tool_key, ref_data)
+        success(f"Topic(s) added to '{tool_key}'!")
+        return
 
-        snips_db.setdefault(tool, {}).setdefault("entries", {})[name.lower()] = entry
-        save_json(SNIP_FILE, snips_db)
-        success(f"Snippet '{name}' added to '{tool}'!")
+    print(c(f"\n  Adding topic '{topic_name}' to: {tool_key.upper()}", "bright"))
+    tdata = collect_topic_data()
+    ref_data.setdefault("topics", {})[topic_name] = tdata
+    header_data[tool_key].setdefault("topics", [])
+    if topic_name not in header_data[tool_key]["topics"]:
+        header_data[tool_key]["topics"].append(topic_name)
+    save_header(header_data)
+    save_tool_ref(tool_key, ref_data)
+    success(f"Topic '{topic_name}' added to '{tool_key}'!")
 
 # ─── Edit command ─────────────────────────────────────────────────────────────
-def cmd_edit(args):
-    if len(args) < 3:
-        warn("Usage: devref --edit <tool> --topic <name>  OR  --edit <tool> --snippets <name>")
+def cmd_edit(raw_args: list):
+    if not raw_args:
+        warn("Usage: devref --edit <tool>  OR  devref --edit <tool> --topic <name>")
         return
-    tool = args[0].lower()
 
-    if "--topic" in args:
-        idx = args.index("--topic")
-        topic_name = args[idx + 1] if idx + 1 < len(args) else None
+    tool_query, rest = resolve_tool(raw_args)
+    header_data = load_header()
+    matches = find_tool_keys(tool_query, header_data)
+    if not matches:
+        warn(f"Tool '{tool_query}' not found.")
+        return
+    tool_key = matches[0]
+
+    if "--topic" in rest:
+        # Edit topic in console editor
+        idx = rest.index("--topic")
+        topic_parts = []
+        for a in rest[idx + 1:]:
+            if a.startswith("--"):
+                break
+            topic_parts.append(a)
+        topic_name = normalise(" ".join(topic_parts))
         if not topic_name:
-            warn("Provide topic name.")
+            warn("Provide a topic name.")
             return
-        tools_db = load_json(TOOLS_FILE)
-        topics   = tools_db.get(tool, {}).get("topics", {})
-        key      = topic_name.lower()
-        if key not in topics:
-            warn(f"Topic '{key}' not found under '{tool}'.")
+        ref_data = load_tool_ref(tool_key)
+        topics = ref_data.get("topics", {})
+        if topic_name not in topics:
+            warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
             return
-        confirm = input(c(f"\n  Type '{key}' to confirm editing: ", "yellow")).strip().lower()
-        if confirm != key:
-            warn("Cancelled.")
+        current = topics[topic_name]
+        edited = open_console_editor_json(current)
+        if edited is None:
             return
+        topics[topic_name] = edited
+        ref_data["topics"] = topics
+        save_tool_ref(tool_key, ref_data)
+        success(f"Topic '{topic_name}' updated!")
+        return
 
-        old = topics[key]
-        print(c(f"\n  Editing '{key}'. Press Enter to keep current value.", "cyan"))
-
-        def pk(field, label_text):
-            cur = old.get(field, "")
-            val = input(c(f"  {label_text} [{cur[:60]}]: ", "yellow")).strip()
-            return val if val else cur
-
-        topics[key]["description"]  = pk("description",  "Description")
-        topics[key]["what_it_does"] = pk("what_it_does", "What it does")
-
-        repl_uc = input(c("  Replace use cases? (y/n): ", "yellow")).strip().lower()
-        if repl_uc == "y":
-            topics[key]["use_cases"] = smart_collect_list("New use cases", hint=HINTS["topic_uc"])
-
-        repl_syn = input(c("  Replace syntax? (y/n): ", "yellow")).strip().lower()
-        if repl_syn == "y":
-            topics[key]["syntax"] = smart_collect_list("New syntax entries", hint=HINTS["syntax_entry"])
-
-        repl_ex = input(c("  Replace examples? (y/n): ", "yellow")).strip().lower()
-        if repl_ex == "y":
-            topics[key]["examples"] = smart_collect_list("New examples", hint=HINTS["example_entry"])
-
-        save_json(TOOLS_FILE, tools_db)
-        success(f"Topic '{key}' updated!")
-
-    elif "--snippets" in args:
-        idx = args.index("--snippets")
-        snip_name = args[idx + 1] if idx + 1 < len(args) else None
-        if not snip_name:
-            warn("Provide snippet name.")
-            return
-        snips_db = load_json(SNIP_FILE)
-        entries  = snips_db.get(tool, {}).get("entries", {})
-        key      = snip_name.lower()
-        if key not in entries:
-            warn(f"Snippet '{key}' not found under '{tool}'.")
-            return
-        confirm = input(c(f"\n  Type '{key}' to confirm editing: ", "yellow")).strip().lower()
-        if confirm != key:
-            warn("Cancelled.")
-            return
-
-        old = entries[key]
-        def pk(field, label_text):
-            cur = old.get(field, "")
-            val = input(c(f"  {label_text} [{cur[:60]}]: ", "yellow")).strip()
-            return val if val else cur
-
-        entries[key]["description"] = pk("description", "Description")
-        entries[key]["pattern"]     = pk("pattern",     "Pattern")
-
-        repl_uc = input(c("  Replace use cases? (y/n): ", "yellow")).strip().lower()
-        if repl_uc == "y":
-            entries[key]["use_cases"] = smart_collect_list("New use cases", hint=HINTS["snip_uc"])
-
-        repl_ex = input(c("  Replace examples? (y/n): ", "yellow")).strip().lower()
-        if repl_ex == "y":
-            entries[key]["examples"] = smart_collect_list("New examples", hint=HINTS["example_entry"])
-
-        save_json(SNIP_FILE, snips_db)
-        success(f"Snippet '{key}' updated!")
+    # Edit tool-level fields: name, description, tags only
+    entry = header_data[tool_key]
+    editable = {
+        "name":        entry.get("name", tool_key),
+        "description": entry.get("description", ""),
+        "tags":        entry.get("tags", []),
+    }
+    edited = open_console_editor_json(editable)
+    if edited is None:
+        return
+    entry["name"]        = edited.get("name", entry["name"])
+    entry["description"] = edited.get("description", entry["description"])
+    entry["tags"]        = edited.get("tags", entry["tags"])
+    header_data[tool_key] = entry
+    save_header(header_data)
+    success(f"Tool '{tool_key}' updated!")
 
 # ─── Delete command ───────────────────────────────────────────────────────────
-def cmd_delete(args):
-    if not args:
-        warn("Usage: devref --delete <tool>  OR  --delete <tool> --topic <n>  OR  --delete <tool> --snippets <n>")
+def cmd_del(raw_args: list):
+    if not raw_args:
+        warn("Usage: devref --del <tool>  OR  devref --del <tool> --topic <name>")
         return
-    tool = args[0].lower()
 
-    if "--topic" in args:
-        idx = args.index("--topic")
-        topic_name = args[idx + 1] if idx + 1 < len(args) and not args[idx+1].startswith("--") else None
+    tool_query, rest = resolve_tool(raw_args)
+    header_data = load_header()
+    matches = find_tool_keys(tool_query, header_data)
+    if not matches:
+        warn(f"Tool '{tool_query}' not found.")
+        return
+    tool_key = matches[0]
+
+    if "--topic" in rest:
+        idx = rest.index("--topic")
+        topic_parts = []
+        for a in rest[idx + 1:]:
+            if a.startswith("--"):
+                break
+            topic_parts.append(a)
+        topic_name = normalise(" ".join(topic_parts))
         if not topic_name:
-            warn("Provide topic name.")
+            warn("Provide a topic name.")
             return
-        tools_db = load_json(TOOLS_FILE)
-        key = topic_name.lower()
-        if key in tools_db.get(tool, {}).get("topics", {}):
-            confirm = input(c(f"\n  Type '{key}' to confirm: ", "yellow")).strip().lower()
-            if confirm != key:
-                warn("Cancelled.")
-                return
-            del tools_db[tool]["topics"][key]
-            save_json(TOOLS_FILE, tools_db)
-            success(f"Topic '{key}' deleted.")
-        else:
-            warn(f"Topic '{key}' not found.")
-
-    elif "--snippets" in args:
-        idx = args.index("--snippets")
-        snip_name = args[idx + 1] if idx + 1 < len(args) and not args[idx+1].startswith("--") else None
-        snips_db = load_json(SNIP_FILE)
-        tool_snips = snips_db.get(tool, {}).get("entries", {})
-        if snip_name:
-            key = snip_name.lower()
-            if key not in tool_snips:
-                warn(f"Snippet '{key}' not found.")
-                return
-            confirm = input(c(f"\n  Type '{key}' to confirm: ", "yellow")).strip().lower()
-            if confirm != key:
-                warn("Cancelled.")
-                return
-            del snips_db[tool]["entries"][key]
-            if not snips_db[tool]["entries"]:
-                del snips_db[tool]
-            save_json(SNIP_FILE, snips_db)
-            success(f"Snippet '{key}' deleted.")
-        else:
-            if tool not in snips_db:
-                warn(f"No snippets for '{tool}'.")
-                return
-            confirm = input(c(f"\n  Type '{tool}' to delete ALL snippets for '{tool}': ", "yellow")).strip().lower()
-            if confirm != tool:
-                warn("Cancelled.")
-                return
-            del snips_db[tool]
-            save_json(SNIP_FILE, snips_db)
-            success(f"All snippets for '{tool}' deleted.")
-
-    else:
-        tools_db = load_json(TOOLS_FILE)
-        if tool not in tools_db:
-            warn(f"'{tool}' not found.")
+        ref_data = load_tool_ref(tool_key)
+        if topic_name not in ref_data.get("topics", {}):
+            warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
             return
-        confirm = input(c(f"\n  Type '{tool}' to confirm deleting ALL of '{tool}': ", "yellow")).strip().lower()
-        if confirm != tool:
+        confirm = input(c(f"\n  Type '{topic_name}' to confirm deletion: ", "yellow")).strip()
+        if normalise(confirm) != normalise(topic_name):
             warn("Cancelled.")
             return
-        del tools_db[tool]
-        save_json(TOOLS_FILE, tools_db)
-        success(f"'{tool}' deleted.")
+        del ref_data["topics"][topic_name]
+        save_tool_ref(tool_key, ref_data)
+        if topic_name in header_data[tool_key].get("topics", []):
+            header_data[tool_key]["topics"].remove(topic_name)
+        save_header(header_data)
+        success(f"Topic '{topic_name}' deleted from '{tool_key}'.")
+        return
 
-# ─── Tag command ──────────────────────────────────────────────────────────────
-def cmd_tag(args):
-    if len(args) < 3:
-        warn('Usage: devref --tag <tool> <topic> "<tag>"')
+    # Delete entire tool
+    confirm = input(c(f"\n  Type '{tool_key}' to confirm deleting ALL of '{tool_key}': ", "yellow")).strip()
+    if normalise(confirm) != normalise(tool_key):
+        warn("Cancelled.")
         return
-    tool, topic, tag = args[0].lower(), args[1].lower(), args[2].strip('"\'')
-    tools_db = load_json(TOOLS_FILE)
-    topics   = tools_db.get(tool, {}).get("topics", {})
-    if topic not in topics:
-        warn(f"Topic '{topic}' not found under '{tool}'.")
-        return
-    topics[topic].setdefault("tags", [])
-    if tag not in topics[topic]["tags"]:
-        topics[topic]["tags"].append(tag)
-    save_json(TOOLS_FILE, tools_db)
-    success(f"Tag '{tag}' added to {tool} → {topic}")
-
-def cmd_find_tag(args):
-    tag = args[0].strip('"\'') if args else ""
-    if not tag:
-        warn('Usage: devref --find --tag "<tag>"')
-        return
-    tools_db = load_json(TOOLS_FILE)
-    header(f'Entries tagged: "{tag}"')
-    found = False
-    for tool, tdata in tools_db.items():
-        for tname, topic in tdata.get("topics", {}).items():
-            if tag.lower() in [t.lower() for t in topic.get("tags", [])]:
-                print(c(f"    {tool}", "yellow") + " → " + c(tname, "green"))
-                found = True
-    if not found:
-        warn(f"No entries with tag '{tag}'.")
-    print()
+    if tool_key in header_data.get("tools", []):
+        header_data["tools"].remove(tool_key)
+    if tool_key in header_data:
+        del header_data[tool_key]
+    save_header(header_data)
+    ref_path = tool_ref_path(tool_key)
+    if ref_path.exists():
+        ref_path.unlink()
+    success(f"'{tool_key}' deleted.")
 
 # ─── List command ─────────────────────────────────────────────────────────────
 def cmd_list():
-    tools_db = load_json(TOOLS_FILE)
-    snips_db = load_json(SNIP_FILE)
-    if not tools_db and not snips_db:
+    header_data = load_header()
+    tools = header_data.get("tools", [])
+    if not tools:
         warn("No entries yet. Run  devref --new <tool>  to start.")
         return
     header("All Tools in Reference")
-    all_tools = sorted(set(list(tools_db.keys()) + list(snips_db.keys())))
-    for tool in all_tools:
-        t_count = len(tools_db.get(tool, {}).get("topics", {}))
-        s_count = len(snips_db.get(tool, {}).get("entries", {}))
-        desc    = tools_db.get(tool, {}).get("description", "")
-        short   = (desc[:48] + "…") if len(desc) > 48 else desc
-        counts  = c(f"[{t_count} topics, {s_count} snippets]", "dim")
-        print(c(f"    • {tool}", "green") + f"  {counts}")
+    for tool_key in sorted(tools):
+        entry = header_data.get(tool_key, {})
+        desc  = entry.get("description", "")
+        short = (desc[:48] + "…") if len(desc) > 48 else desc
+        tid   = entry.get("id", "??????")
+        topics = entry.get("topics", [])
+        print(c(f"    [{tid}]", "yellow") + "  " + c(entry.get("name", tool_key), "bright") +
+              c(f"  [{len(topics)} topics]", "dim"))
         if short:
             print(c(f"        {short}", "dim"))
     print()
 
-# ─── Recent command ───────────────────────────────────────────────────────────
-def cmd_recent():
-    meta   = load_json(META_FILE)
-    recent = meta.get("recent", [])
-    if not recent:
-        tip("No recent lookups yet.")
+# ─── Prompt command ───────────────────────────────────────────────────────────
+def cmd_prompt(raw_args: list):
+    if not raw_args:
+        warn("Usage: devref --prompt <tool>")
         return
-    header("Recent Lookups")
-    for r in recent[:10]:
-        print(c(f"    {r['time']}", "dim") + "  " + c(f"devref {r['query']}", "green"))
-    print()
 
-# ─── Backup command ───────────────────────────────────────────────────────────
-def cmd_backup():
-    import shutil
-    ts         = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_dir = DEVREF_DIR / "backups" / ts
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    for f in [TOOLS_FILE, SNIP_FILE, META_FILE]:
-        if f.exists():
-            shutil.copy(f, backup_dir / f.name)
-    success(f"Backup saved to: {backup_dir}")
+    tool_query, _ = resolve_tool(raw_args)
+    tool = tool_query
+
+    header_data = load_header()
+    matches = find_tool_keys(tool, header_data)
+    tool_display = matches[0] if matches else tool
+
+    prompt_text = f"""
+Generate a tool reference entry for devref for the tool: "{tool_display}"
+
+Use EXACTLY this JSON structure — raw JSON only, no markdown fences, no preamble:
+
+{{
+  "id": "AUTO",
+  "name": "{tool_display}",
+  "topics": {{
+    "topic-name": {{
+      "name": "topic-name",
+      "tags": ["tag1", "tag2"],
+      "description": "What this topic is about",
+      "what_it_does": "Detailed explanation of behavior",
+      "use_cases": [
+        "Use this when doing X",
+        "Prefer this over Y when Z"
+      ],
+      "syntax": [
+        "command --flag <required>",
+        "command --flag <required> [optional]"
+      ],
+      "examples": [
+        "real working example",
+        "another concrete example"
+      ]
+    }}
+  }}
+}}
+
+Requirements:
+- Cover at least 6 of the most commonly used topics for "{tool_display}"
+- Descriptions: concise and accurate
+- Syntax: use <angle-brackets> for required args and [brackets] for optional
+- Use cases: specific and actionable
+- Multiple topics may be included in this single file — add as many topic blocks as needed
+- Output raw JSON only — no explanation, preamble or markdown fences
+- Don't use these kind of naming conventions: firstname-lastname rather use firstnamelastname 
+"""
+    header(f"AI Prompt  —  {tool_display.upper()}")
+    print(c(prompt_text, "white"))
+    tip("Paste into Claude/ChatGPT → copy returned JSON → save as file.json")
+    tip(f"Then run:  devref --import file.json --tool {tool_display}")
+
+def cmd_prompt_topic(tool_key: str, topic_name: str, topic_data: dict, header_entry: dict):
+    """Print prompt for a single topic. Multiple topics hint included."""
+    header(f"AI Prompt  —  {tool_key.upper()}  →  {topic_name}")
+    prompt_text = f"""
+You are populating a developer reference entry.
+Tool: "{header_entry.get('name', tool_key)}"
+Topic: "{topic_name}"
+
+Current data:
+{json.dumps(topic_data, indent=2)}
+
+Improve, fill in missing fields, or generate new content for this topic.
+Multiple related topics may be included in one file — add extra topic blocks freely.
+
+Output ONLY raw JSON with this structure (no markdown fences, no preamble):
+
+{{
+  "{topic_name}": {{
+    "name": "{topic_name}",
+    "tags": ["tag1"],
+    "description": "...",
+    "what_it_does": "...",
+    "use_cases": ["..."],
+    "syntax": ["command --flag <required>"],
+    "examples": ["example here"]
+  }},
+  "optional-extra-topic": {{ ... }}
+}}
+"""
+    print(c(prompt_text, "white"))
+    tip(f"Paste into AI → save result → run:  devref --import result.json --tool {tool_key} --topic result.json")
 
 # ─── Export command ───────────────────────────────────────────────────────────
-def cmd_export(args):
-    if not args:
+def cmd_export(raw_args: list):
+    if not raw_args:
         warn("Usage: devref --export <tool>")
         return
-    tool     = args[0].lower()
-    tools_db = load_json(TOOLS_FILE)
-    snips_db = load_json(SNIP_FILE)
-    lines    = [f"# {tool.upper()} Reference\n"]
 
-    tdata = tools_db.get(tool)
-    if tdata:
-        lines.append(f"**{tdata.get('description','')}**\n")
-        if tdata.get("use_cases"):
-            lines.append("\n**Use Cases:**\n")
-            for uc in tdata["use_cases"]: lines.append(f"- {uc}\n")
-        for tname, topic in tdata.get("topics", {}).items():
-            lines.append(f"\n## {tname}\n")
-            if "description"  in topic: lines.append(f"{topic['description']}\n")
-            if "what_it_does" in topic: lines.append(f"\n_{topic['what_it_does']}_\n")
-            if topic.get("use_cases"):
-                lines.append("\n**Use Cases:**\n")
-                for uc in topic["use_cases"]: lines.append(f"- {uc}\n")
-            if topic.get("syntax"):
-                lines.append("\n**Syntax:**\n")
-                for s in topic["syntax"]: lines.append(f"```\n{s}\n```\n")
-            if topic.get("examples"):
-                lines.append("\n**Examples:**\n")
-                for e in topic["examples"]: lines.append(f"```\n{e}\n```\n")
+    tool_query, _ = resolve_tool(raw_args)
+    header_data = load_header()
+    matches = find_tool_keys(tool_query, header_data)
+    if not matches:
+        warn(f"Tool '{tool_query}' not found.")
+        return
+    tool_key = matches[0]
 
-    sdata = snips_db.get(tool, {}).get("entries", {})
-    if sdata:
-        lines.append("\n## Snippets\n")
-        for sname, entry in sdata.items():
-            lines.append(f"\n### {sname}\n")
-            if "description" in entry: lines.append(f"{entry['description']}\n")
-            if entry.get("use_cases"):
-                lines.append("\n**Use Cases:**\n")
-                for uc in entry["use_cases"]: lines.append(f"- {uc}\n")
-            if "pattern" in entry: lines.append(f"\n```\n{entry['pattern']}\n```\n")
-            if entry.get("examples"):
-                for e in entry["examples"]: lines.append(f"```\n{e}\n```\n")
+    header_entry = header_data[tool_key]
+    ref_data     = load_tool_ref(tool_key)
 
-    out = DEVREF_DIR / f"{tool}_export.md"
-    out.write_text("\n".join(lines), encoding="utf-8")
+    export_data = {
+        "id":          header_entry.get("id"),
+        "name":        header_entry.get("name", tool_key),
+        "description": header_entry.get("description", ""),
+        "tags":        header_entry.get("tags", []),
+        "topics":      ref_data.get("topics", {})
+    }
+
+    out = DEVREF_DIR / f"{tool_key}_export.json"
+    save_json(out, export_data)
     success(f"Exported to: {out}")
 
 # ─── Import command ───────────────────────────────────────────────────────────
-def cmd_import(args):
-    if not args:
-        warn("Usage: devref --import <file.json>")
+def cmd_import(raw_args: list):
+    """
+    devref --import <file>                         → auto-detect as full tool export
+    devref --import <file> --tool <name>           → import file as new tool named <name>
+    devref --import <file> --tool <name> --topic <file2>  → create tool + add topic from file2
+    """
+    if not raw_args:
+        warn("Usage: devref --import <file>  [--tool <name>]  [--topic <file2>]")
         return
-    src = Path(args[0])
-    if not src.exists():
-        warn(f"File not found: {src}")
+
+    src_path = Path(raw_args[0])
+    if not src_path.exists():
+        warn(f"File not found: {src_path}")
         return
-    new_data = load_json(src)
+
+    # Parse --tool <name>
+    tool_name = None
+    if "--tool" in raw_args:
+        idx = raw_args.index("--tool")
+        tool_parts = []
+        for a in raw_args[idx + 1:]:
+            if a.startswith("--"):
+                break
+            tool_parts.append(a)
+        tool_name = normalise(" ".join(tool_parts)) if tool_parts else None
+
+    # Parse --topic <file2>
+    topic_file = None
+    if "--topic" in raw_args:
+        idx = raw_args.index("--topic")
+        if idx + 1 < len(raw_args) and not raw_args[idx + 1].startswith("--"):
+            topic_file = Path(raw_args[idx + 1])
+
+    try:
+        new_data = load_json(src_path)
+    except Exception as e:
+        warn(f"Could not parse JSON: {e}")
+        return
+
     if not isinstance(new_data, dict) or not new_data:
-        warn(f"Empty or invalid JSON in {src.name}")
+        warn("Empty or invalid JSON.")
         return
 
-    # Detect whether this is a snippets file (values have an "entries" key)
-    is_snippets = all(
-        isinstance(v, dict) and "entries" in v
-        for v in new_data.values()
-    )
+    header_data = load_header()
 
-    merged = 0
-    if is_snippets:
-        snips_db = load_json(SNIP_FILE)
-        for tool, val in new_data.items():
-            snips_db.setdefault(tool, {}).setdefault("entries", {})
-            for sname, sdata in val.get("entries", {}).items():
-                snips_db[tool]["entries"][sname] = sdata
-                merged += 1
-        save_json(SNIP_FILE, snips_db)
-        success(f"Merged {merged} snippet entries from {src.name} → snippets.json")
-    else:
-        tools_db = load_json(TOOLS_FILE)
-        for key, val in new_data.items():
-            if key not in tools_db:
-                tools_db[key] = val
-                merged += 1
-            else:
-                for tname, tdata in val.get("topics", {}).items():
-                    tools_db[key].setdefault("topics", {})[tname] = tdata
-                    merged += 1
-        save_json(TOOLS_FILE, tools_db)
-        success(f"Merged {merged} entries from {src.name} → tools.json")
-
-# ─── Prompt command ───────────────────────────────────────────────────────────
-def cmd_prompt(args):
-    if not args:
-        warn("Usage: devref --prompt <tool>  [--tools | --snippets]")
+    if tool_name and topic_file:
+        # Create tool from src_path; add topic(s) from topic_file
+        _import_as_new_tool(header_data, tool_name, new_data)
+        try:
+            topic_data = load_json(topic_file)
+        except Exception as e:
+            warn(f"Could not parse topic file: {e}")
+            return
+        _import_topics_into_tool(header_data, tool_name, topic_data)
         return
-    tool = args[0]
-    mode = "both"
-    if "--tools"    in args: mode = "tools"
-    if "--snippets" in args: mode = "snippets"
 
-    tools_prompt = f"""
-Generate a tools.json entry for devref for the tool: "{tool}"
+    if tool_name:
+        # Import src_path as a new tool
+        _import_as_new_tool(header_data, tool_name, new_data)
+        return
 
-Use EXACTLY this JSON structure — no extra keys, no markdown fences, raw JSON only:
+    # Auto-detect: exported tool file (has "topics" key at root)
+    if "topics" in new_data:
+        inferred_name = tool_name or normalise(new_data.get("name", src_path.stem))
+        _import_as_new_tool(header_data, inferred_name, new_data)
+        return
 
-{{
-  "{tool}": {{
-    "description": "One-line description of {tool}",
-    "tags": ["tag1", "tag2"],
-    "use_cases": [
-      "When you need to do X",
-      "As an alternative to Y when Z"
-    ],
-    "topics": {{
-      "topic-name": {{
-        "description": "What this topic is about",
-        "what_it_does": "More detailed explanation of behavior",
-        "use_cases": [
-          "Use this when doing X",
-          "Prefer this over Y when Z"
-        ],
-        "syntax": [
-          "command --flag",
-          "command --flag <required> [optional]"
-        ],
-        "examples": [
-          "real working example",
-          "another concrete example"
-        ],
-        "tags": ["optional", "topic-level", "tags"]
-      }}
-    }}
-  }}
-}}
+    warn("Could not determine import type. Use --tool <name> to specify.")
 
-Requirements:
-- Cover at least 6 of the most commonly used topics for "{tool}"
-- Make descriptions concise and accurate
-- Syntax entries must use <angle-brackets> for required args and [brackets] for optional
-- Use cases must be specific and actionable (not generic like "use when needed")
-- Output raw JSON only — absolutely no explanation, preamble or markdown fences
-"""
+def _import_as_new_tool(header_data: dict, tool_key: str, data: dict):
+    existing = find_tool_keys(tool_key, header_data)
+    if existing:
+        # Merge topics
+        real_key = existing[0]
+        ref_data = load_tool_ref(real_key)
+        count = 0
+        for tname, tdata in data.get("topics", {}).items():
+            norm = normalise(tname)
+            ref_data.setdefault("topics", {})[norm] = tdata
+            if norm not in header_data[real_key].get("topics", []):
+                header_data[real_key].setdefault("topics", []).append(norm)
+            count += 1
+        save_tool_ref(real_key, ref_data)
+        save_header(header_data)
+        success(f"Merged {count} topics into existing '{real_key}'.")
+        return
 
-    snippets_prompt = f"""
-Generate a snippets.json entry for devref for the tool: "{tool}"
+    desc   = data.get("description", "")
+    tags   = data.get("tags", [])
+    topics = data.get("topics", {})
+    hex_id = data.get("id") or generate_hex_id()
 
-Use EXACTLY this JSON structure — no extra keys, no markdown fences, raw JSON only:
+    header_data.setdefault("tools", []).append(tool_key)
+    header_data[tool_key] = {
+        "id":          hex_id,
+        "name":        data.get("name", tool_key),
+        "tags":        tags,
+        "description": desc,
+        "topics":      list(topics.keys())
+    }
+    ref_data = {"id": hex_id, "name": tool_key, "topics": topics}
+    save_header(header_data)
+    save_tool_ref(tool_key, ref_data)
+    success(f"'{tool_key}' imported with {len(topics)} topics.")
 
-{{
-  "{tool}": {{
-    "entries": {{
-      "snippet-name": {{
-        "description": "What this snippet/pattern does",
-        "use_cases": [
-          "Use this when building X",
-          "Prefer over Y for Z reasons"
-        ],
-        "pattern": "command --flag <required> [optional]",
-        "examples": [
-          "concrete working example here",
-          "another real example"
-        ]
-      }}
-    }}
-  }}
-}}
+def _import_topics_into_tool(header_data: dict, tool_key: str, topic_data: dict):
+    """Add topics from topic_data dict into an existing tool."""
+    matches = find_tool_keys(tool_key, header_data)
+    if not matches:
+        warn(f"Tool '{tool_key}' not found after creation — this shouldn't happen.")
+        return
+    real_key = matches[0]
+    ref_data = load_tool_ref(real_key)
+    count = 0
 
-Requirements:
-- Cover at least 6 of the most commonly used patterns/snippets for "{tool}"
-- Pattern must be a real command pattern with <required> and [optional] markers
-- Use cases must be specific scenarios, not vague descriptions
-- Include at least 2 examples per snippet
-- Output raw JSON only — no explanation, preamble or markdown fences
-"""
+    # topic_data may be {topic_name: {...}} directly, or {"topics": {topic_name: {...}}}
+    topics_dict = topic_data.get("topics", topic_data)
+    for tname, tdata in topics_dict.items():
+        if tname in ("id", "name", "description", "tags"):
+            continue
+        norm = normalise(tname)
+        ref_data.setdefault("topics", {})[norm] = tdata
+        if norm not in header_data[real_key].get("topics", []):
+            header_data[real_key].setdefault("topics", []).append(norm)
+        count += 1
 
-    if mode == "tools":
-        header(f"AI Prompt  —  {tool.upper()}  →  tools.json")
-        print(c(tools_prompt, "white"))
-        tip("Paste into Claude or ChatGPT → copy returned JSON → save as file.json")
-        tip(f"Then run:  devref --import file.json")
+    save_tool_ref(real_key, ref_data)
+    save_header(header_data)
+    success(f"Added {count} topic(s) to '{real_key}'.")
 
-    elif mode == "snippets":
-        header(f"AI Prompt  —  {tool.upper()}  →  snippets.json")
-        print(c(snippets_prompt, "white"))
-        tip("Paste into Claude or ChatGPT → copy returned JSON → save as file.json")
-        tip("Note: snippets.json imports need manual merge if file already exists")
+# ─── Notes command ────────────────────────────────────────────────────────────
+def cmd_note(raw_args: list):
+    """
+    devref --note              → list all notes
+    devref --note <name>       → open/create note in console editor
+    devref --note <name> --del → delete note
+    """
+    name_parts = [a for a in raw_args if not a.startswith("--")]
+    name = normalise(" ".join(name_parts)) if name_parts else ""
+    do_del = "--del" in raw_args
 
-    else:
-        header(f"AI Prompt  —  {tool.upper()}  →  tools.json")
-        print(c(tools_prompt, "white"))
-        print()
-        print(c("─" * 62, "dim"))
-        header(f"AI Prompt  —  {tool.upper()}  →  snippets.json")
-        print(c(snippets_prompt, "white"))
-        tip("Run each prompt separately  →  save each result as its own .json file")
-        tip(f"Then:  devref --import tools_result.json")
-        tip(f"And:   devref --import snippets_result.json  (manual merge for snippets)")
-
-# ─── Settings command ─────────────────────────────────────────────────────────
-def cmd_set(args):
-    if len(args) < 2:
-        s = load_settings()
-        header("Current Settings")
-        for k, v in s.items():
-            state = c("ON", "green") if v else c("OFF", "dim")
-            print(c(f"    {k}", "yellow") + " = " + state)
-        print()
-        tip("devref --set hints on/off        Toggle wizard example hints")
-        tip("devref --set autocomplete on/off  Toggle prompt_toolkit autocomplete")
+    if not name:
+        # List all notes
+        notes = sorted(NOTES_DIR.glob("*.txt"))
+        if not notes:
+            tip("No notes yet. Run  devref --note <name>  to create one.")
+            return
+        header("Notes")
+        for n in notes:
+            mtime = datetime.datetime.fromtimestamp(n.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            print(c(f"    {n.stem}", "green") + c(f"  (modified: {mtime})", "dim"))
         print()
         return
-    key, val = args[0].lower(), args[1].lower()
-    settings = load_settings()
-    if key == "hints":
-        settings["hints"] = (val == "on")
-        save_settings(settings)
-        state = "ON" if settings["hints"] else "OFF"
-        success(f"Hints turned {state}. Wizard prompts will {'show' if settings['hints'] else 'hide'} examples.")
-    elif key == "autocomplete":
-        settings["autocomplete"] = (val == "on")
-        save_settings(settings)
-        state = "ON" if settings["autocomplete"] else "OFF"
-        if settings["autocomplete"] and not HAS_PT:
-            warn("Autocomplete enabled but prompt_toolkit is not installed.")
-            tip("Run:  pip install prompt_toolkit  to enable it")
-        else:
-            success(f"Autocomplete turned {state}.")
+
+    note_path = NOTES_DIR / f"{name}.txt"
+
+    if do_del:
+        if not note_path.exists():
+            warn(f"Note '{name}' not found.")
+            return
+        confirm = input(c(f"\n  Type '{name}' to confirm deletion: ", "yellow")).strip()
+        if normalise(confirm) != name:
+            warn("Cancelled.")
+            return
+        note_path.unlink()
+        success(f"Note '{name}' deleted.")
+        return
+
+    # Open or create in console editor
+    initial = ""
+    if note_path.exists():
+        with open(note_path, "r", encoding="utf-8") as f:
+            initial = f.read()
     else:
-        warn(f"Unknown setting: '{key}'. Available: hints, autocomplete")
+        initial = f"# {name}\n# Created: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+
+    edited = open_console_editor(initial)
+
+    with open(note_path, "w", encoding="utf-8") as f:
+        f.write(edited)
+
+    # Update modification stamp as a footer (non-destructive)
+    stamp = f"\n# Last saved: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    with open(note_path, "a", encoding="utf-8") as f:
+        f.write(stamp)
+
+    success(f"Note '{name}' saved.")
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 def main():
-    _migrate_legacy()
     argv = sys.argv[1:]
 
     if not argv or argv[0] in ("--help", "-h"):
@@ -1226,20 +1188,17 @@ def main():
     rest = argv[1:]
 
     dispatch = {
-        "--find":   lambda: cmd_find_tag(rest[1:]) if rest and rest[0] == "--tag" else cmd_find(rest),
+        "--find":   lambda: cmd_find(rest),
         "--search": lambda: cmd_search(rest),
         "--new":    lambda: cmd_new(rest),
         "--add":    lambda: cmd_add(rest),
         "--edit":   lambda: cmd_edit(rest),
-        "--delete": lambda: cmd_delete(rest),
-        "--tag":    lambda: cmd_tag(rest),
+        "--del":    lambda: cmd_del(rest),
         "--list":   lambda: cmd_list(),
-        "--recent": lambda: cmd_recent(),
-        "--backup": lambda: cmd_backup(),
         "--export": lambda: cmd_export(rest),
         "--import": lambda: cmd_import(rest),
         "--prompt": lambda: cmd_prompt(rest),
-        "--set":    lambda: cmd_set(rest),
+        "--note":   lambda: cmd_note(rest),
     }
 
     if cmd in dispatch:
