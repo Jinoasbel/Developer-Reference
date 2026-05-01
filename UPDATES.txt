@@ -17,47 +17,99 @@ v2.0 layout:
 
 v3.0 layout:
   devref/
+  ├── devref.py               (entry point — arg dispatch table)
+  ├── devref.bat              (Windows launcher)
+  ├── commands/               (one file per CLI command)
+  │   ├── cmd_find.py
+  │   ├── cmd_search.py
+  │   ├── cmd_new.py
+  │   ├── cmd_add.py
+  │   ├── cmd_edit.py
+  │   ├── cmd_del.py
+  │   ├── cmd_list.py
+  │   ├── cmd_export.py
+  │   ├── cmd_import.py
+  │   ├── cmd_prompt.py
+  │   └── cmd_note.py
+  ├── components/             (shared UI and input helpers)
+  │   ├── display.py
+  │   ├── editor.py
+  │   └── wizard.py
+  ├── utils/                  (data layer)
+  │   ├── fs.py
+  │   ├── header.py
+  │   └── ids.py
   ├── src/
-  │   └── header.json     (master index, replaces tools.json)
+  │   └── header.json         (master index, replaces tools.json)
   ├── ref/
-  │   ├── git.json        (one file per tool)
+  │   ├── git.json            (one file per tool)
   │   ├── python.json
   │   └── ...
   └── notes/
-      └── *.txt           (note files, new in v3.0)
+      └── *.txt               (note files, new in v3.0)
 
-Reason: Splitting tools into individual files avoids loading
-the entire database for every command and keeps each tool's
-data self-contained and portable.
+Reason: Splitting tools into individual files avoids loading the entire
+database for every command and keeps each tool's data self-contained and
+portable. Commands, UI components, and data utilities are separated into
+their own modules instead of living in a single script.
 
 header.json structure:
   {
     "tools": ["git", "python"],
     "git": {
-      "id": "A3F9C1",
-      "name": "git",
-      "tags": [...],
+      "id":          "A3F9C1",
+      "name":        "git",
+      "type":        "cmdlinetool",
+      "tags":        [...],
       "description": "...",
-      "topics": ["commit", "branch"]
+      "topics":      ["commit", "branch"]
     }
   }
 
 ref/<tool>.json structure:
   {
-    "id": "A3F9C1",
+    "id":   "A3F9C1",
     "name": "git",
     "topics": {
       "commit": {
-        "name": "commit",
-        "tags": [...],
-        "description": "...",
+        "name":         "commit",
+        "type":         "subcommand",
+        "tags":         [...],
+        "description":  "...",
         "what_it_does": "...",
-        "use_cases": [...],
-        "syntax": [...],
-        "examples": [...]
+        "use_cases":    [...],
+        "syntax":       [...],
+        "examples":     [...],
+        "flags":        { "--flag": "description", ... },
+        "arguments":    { "<arg>": "description", ... }
       }
     }
   }
+
+
+----------------------------------------------------------
+  CODEBASE STRUCTURE  (new)
+----------------------------------------------------------
+
+v2.0: single devref.py script.
+
+v3.0: split into four packages:
+
+  commands/   one module per CLI flag (cmd_find, cmd_new, etc.)
+  components/ shared terminal output, editor, and wizard helpers
+  utils/      filesystem, header CRUD, ID generation, normalisation
+
+devref.py is now a thin dispatch table only — no logic lives there.
+
+Key modules:
+
+  utils/fs.py       load_json / save_json, path constants
+  utils/ids.py      generate_hex_id, normalise, fuzzy_name_match
+  utils/header.py   load/save header and ref files, resolve_tool,
+                    find_tool_keys, add_tool_to_header
+  components/display.py   all terminal output (supports colorama)
+  components/wizard.py    ask / ask_list / ask_flags / collect_topic_data
+  components/editor.py    open_console_editor / open_console_editor_json
 
 
 ----------------------------------------------------------
@@ -66,8 +118,8 @@ ref/<tool>.json structure:
 
 v2.0: exact lowercase match only. "git" ≠ "Git".
 
-v3.0: all names are normalised by stripping spaces,
-underscores, and hyphens and lowercasing before comparison.
+v3.0: all names are normalised by stripping spaces, underscores, and
+hyphens and lowercasing before comparison. Implemented in utils/ids.py.
 
   git  ==  Git  ==  G_it  ==  g-it  ==  GIT
 
@@ -76,8 +128,8 @@ Multi-word names are joined automatically:
   devref --find hello world
   → no quotes needed, joins to "helloworld"
 
-When two distinct keys normalise to the same string both
-are shown with their hex IDs and the user selects by ID:
+When two distinct keys normalise to the same string, both are shown with
+their hex IDs and the user selects by ID:
   devref --find git --id A3F9C1
 
 
@@ -85,15 +137,69 @@ are shown with their hex IDs and the user selects by ID:
   HEX IDs  (new)
 ----------------------------------------------------------
 
-Every tool now has a 6-digit uppercase hexadecimal ID,
-auto-generated at creation time.
+Every tool now has a 6-digit uppercase hexadecimal ID, auto-generated at
+creation time by generate_hex_id() in utils/ids.py.
 
   Example: A3F9C1
 
-IDs are displayed in --list and when multiple tools match
-the same normalised name. Case-insensitive: A3F9C1 == a3f9c1.
+IDs are displayed in --list and when multiple tools match the same
+normalised name. Case-insensitive: A3F9C1 == a3f9c1.
 
 Used for disambiguation only; normal lookup is by name.
+
+
+----------------------------------------------------------
+  TYPE FIELD  (new)
+----------------------------------------------------------
+
+v2.0: no type classification for tools or topics.
+
+v3.0: a "type" field has been added at both the tool level and the topic
+level.
+
+Tool-level type (stored in header.json):
+  interpreter    runtime that executes code (Python, Node)
+  cmdlinetool    standalone CLI binary (git, curl, jq)
+  framework      application framework (Django, React)
+  library        importable code library
+  builtin        shell built-in or OS primitive
+  packagemanager package/dependency manager (pip, npm)
+
+Topic-level type (stored in ref/<tool>.json):
+  subcommand     a named subcommand (git commit, docker run)
+  flag           a specific flag or option (--verbose)
+  concept        a mental model or idea (branching strategy)
+  workflow       a multi-step process (release flow)
+
+The type is shown in --find output and included in AI prompt templates
+so generated JSON matches the schema.
+
+
+----------------------------------------------------------
+  FLAGS AND ARGUMENTS FIELDS  (new)
+----------------------------------------------------------
+
+v2.0: no structured field for flags or positional arguments.
+
+v3.0: two optional fields added to the topic schema:
+
+  "flags": {
+    "--amend":      "rewrite the previous commit",
+    "--no-edit":    "keep the existing commit message",
+    "-m <message>": "set commit message inline"
+  }
+
+  "arguments": {
+    "<message>": "the commit message string"
+  }
+
+flags is a { "--flag": "description" } map. Keys use the actual flag
+string including any arg placeholder. arguments is a { "<arg>": "desc" }
+map for positional arguments in angle-bracket notation.
+
+Both fields are optional — omit them if the topic has no flags or
+positional args. They are rendered as key→description tables by
+display_topic() and included in all AI prompt and notepad templates.
 
 
 ----------------------------------------------------------
@@ -109,8 +215,8 @@ The entire snippets system has been removed:
   - devref --delete <tool> --snippets <name>
   - devref --edit <tool> --snippets <name>
 
-Reason: snippets and topics covered overlapping ground.
-Everything is now unified under topics.
+Reason: snippets and topics covered overlapping ground. Everything is now
+unified under topics.
 
 
 ----------------------------------------------------------
@@ -128,8 +234,8 @@ v3.0: tag-based search only.
   devref --find <tool> --tag <tag>
   → searches topic-level tags within one tool
 
-All free-text / fuzzy / word-in-description search has been
-removed. This includes all --search sub-flags:
+All free-text / fuzzy / word-in-description search has been removed. This
+includes all --search sub-flags:
   --tools, --snippets, --topics, --usecases, --examples
   (these flags no longer exist)
 
@@ -145,16 +251,17 @@ Also removed:
   --new  (changed)
 ----------------------------------------------------------
 
-v2.0: wizard asked for description, use-cases, tags then
-opened a loop for topics. --notepad opened Windows Notepad.
+v2.0: wizard asked for description, use-cases, tags then opened a loop for
+topics. --notepad opened Windows Notepad.
 
-v3.0: same terminal wizard behaviour.
---notepad now opens the system console editor ($EDITOR /
-nano / vim / notepad.exe) instead of Windows Notepad only.
-Template follows the new ref/<tool>.json JSON structure.
+v3.0: same terminal wizard behaviour. Now also prompts for tool-level type
+(via collect_tool_type() in wizard.py).
+--notepad now opens the system console editor ($EDITOR / nano / vim / vi /
+notepad.exe) instead of Windows Notepad only. Template includes type,
+flags, and arguments placeholders matching the new schema.
 
-Use cases at the tool level have been removed from the wizard
-(they are still supported in topic entries).
+Use cases at the tool level have been removed from the wizard (they are
+still supported in topic entries).
 
 
 ----------------------------------------------------------
@@ -167,7 +274,14 @@ v2.0: devref --add <tool> --topic     (no topic name, prompted)
 v3.0: devref --add <tool> --topic <name>
       Topic name is supplied on the command line.
       --snippets variant removed entirely.
+      Wizard now collects type, flags, and arguments in addition to the
+      previous fields.
       --notepad opens console editor instead of Windows Notepad.
+
+inner_call mode: cmd_add accepts inner_call=1 which bypasses the
+interactive wizard and writes an empty skeleton. Used internally by
+cmd_find --prompt to silently pre-create a topic before generating a
+prompt.
 
 
 ----------------------------------------------------------
@@ -175,17 +289,16 @@ v3.0: devref --add <tool> --topic <name>
 ----------------------------------------------------------
 
 v2.0: devref --edit <tool> --topic <name>
-      Showed truncated current value in brackets, asked to
-      retype the full field to replace it. No visual editing.
+      Showed truncated current value in brackets, asked to retype the full
+      field to replace it. No visual editing.
 
 v3.0: devref --edit <tool>
-      Opens an editor with name, description and tags
-      pre-loaded. Edit only what needs changing. Save and
-      close to apply.
+      Opens an editor with name, description and tags pre-loaded. Edit
+      only what needs changing. Save and close to apply.
 
       devref --edit <tool> --topic <name>
-      Opens the full topic JSON pre-loaded in the console
-      editor. All fields visible; edit surgically.
+      Opens the full topic JSON (including type, flags, arguments) pre-loaded
+      in the console editor. All fields visible; edit surgically.
 
 Removed:
   devref --edit <tool> --snippets <name>
@@ -211,19 +324,19 @@ v3.0: --del <tool>                       (renamed from --delete)
 v2.0: devref --prompt <tool>
       devref --prompt <tool> --tools
       devref --prompt <tool> --snippets
-      Generated separate prompts for tools.json and
-      snippets.json.
+      Generated separate prompts for tools.json and snippets.json.
 
 v3.0: devref --prompt <tool>
-      Generates a single prompt for the unified tool format.
-      The prompt explicitly instructs the AI that multiple
-      topics may be included in one JSON file.
+      Generates a single prompt for the unified tool format. The prompt
+      explicitly instructs the AI to include type at the tool level and
+      type, flags, and arguments inside each topic. Multiple topics may be
+      included in one JSON file.
 
       devref --find <tool> --prompt <topic>
-      New: generates a prompt scoped to one topic,
-      pre-loading current topic data so the AI can improve
-      it. Also hints that additional related topics may be
-      included in the response.
+      New: generates a prompt scoped to one topic, pre-loading current
+      topic data so the AI can improve it. If the topic does not exist it
+      is auto-created as an empty skeleton first (inner_call=1). Also hints
+      that additional related topics may be included in the response.
 
 Removed:
   --prompt <tool> --tools
@@ -241,13 +354,16 @@ v3.0: devref --import <file>
       Imports a file exported by --export (unified format).
 
       devref --import <file> --tool <name>
-      Imports the file as a tool with an explicit name.
-      Merges topics if tool already exists.
+      Imports the file as a tool with an explicit name. Merges topics if
+      tool already exists.
 
-      devref --import <file> --tool <name> --topic <file2>
-      Creates tool from <file>, then imports topic(s) from
-      <file2>. <file2> may contain a single topic or multiple
-      topics (with or without a "topics" wrapper key).
+      devref --import <file> --tool <name> --topic
+      Reads <file> as a topic map and adds its entries as topics under the
+      named tool. Accepts a plain topic map or a full tool export (id,
+      name, description, tags, type keys are skipped automatically).
+
+Import is idempotent — re-importing an updated export merges topics rather
+than overwriting.
 
 The snippets.json auto-detection logic has been removed.
 
@@ -258,9 +374,18 @@ The snippets.json auto-detection logic has been removed.
 
 v2.0: exported as Markdown (.md) file.
 
-v3.0: exports as a single self-contained JSON file
-      (<tool>_export.json) matching the unified ref format.
-      This file can be directly re-imported with --import.
+v3.0: exports as a single self-contained JSON file (<tool>_export.json)
+matching the unified ref format, including the new type, flags, and
+arguments fields. This file can be directly re-imported with --import.
+
+
+----------------------------------------------------------
+  --list  (updated output)
+----------------------------------------------------------
+
+v2.0: showed ID, name, description, topic count.
+
+v3.0: also shows the tool-level type field alongside the other columns.
 
 
 ----------------------------------------------------------
@@ -272,26 +397,23 @@ Removed entirely:
   devref --set autocomplete on/off
   devref --set  (show settings)
 
-Reason: hints and autocomplete were tied to prompt_toolkit
-which is no longer a dependency. Console editor replaces
-the wizard for complex edits.
+Reason: hints and autocomplete were tied to prompt_toolkit which is no
+longer a dependency. Console editor replaces the wizard for complex edits.
 
 
 ----------------------------------------------------------
   --recent  (removed)
 ----------------------------------------------------------
 
-devref --recent  has been removed.
-Lookup history is no longer tracked.
+devref --recent  has been removed. Lookup history is no longer tracked.
 
 
 ----------------------------------------------------------
   --backup  (removed)
 ----------------------------------------------------------
 
-devref --backup  has been removed.
-Since each tool is its own file, version control (git) or
-manual file copies are a better fit.
+devref --backup  has been removed. Since each tool is its own file,
+version control (git) or manual file copies are a better fit.
 
 
 ----------------------------------------------------------
@@ -304,10 +426,9 @@ A new command for personal scratch notes:
       List all notes with last-modified timestamps.
 
   devref --note <name>
-      Open or create a note in the console editor.
-      On creation, a header comment is inserted.
-      On every save, a  # Last saved: <timestamp>  line
-      is appended to the file automatically.
+      Open or create a note in the console editor. On creation, a header
+      comment is inserted. On every save, a  # Last saved: <timestamp>
+      line is appended to the file automatically.
 
   devref --note <name> --del
       Delete the note (requires typing name to confirm).
@@ -322,9 +443,9 @@ Notes are stored as plain .txt files in notes/.
 v2.0: devref --tag <tool> <topic> "<tag>"
       A dedicated command to add a tag to a topic.
 
-v3.0: Tags are managed via --edit <tool> --topic <name>
-which opens the full topic JSON. Add or remove tags there.
-The standalone --tag command has been removed.
+v3.0: Tags are managed via --edit <tool> --topic <name>, which opens the
+full topic JSON. Add or remove tags there. The standalone --tag command
+has been removed.
 
 
 ----------------------------------------------------------
@@ -336,8 +457,8 @@ v2.0: devref --find --tag "<tag>"  (no tool specified)
 v3.0: devref --find <tool> --tag <tag>  (scoped to a tool)
       devref --search <tag>             (cross-tool tag search)
 
-The old  devref --find --tag  form without a tool name is
-replaced by  devref --search <tag>.
+The old  devref --find --tag  form without a tool name is replaced by
+devref --search <tag>.
 
 
 ----------------------------------------------------------
@@ -351,35 +472,43 @@ Removed optional dependencies:
 Remaining optional:
   colorama        (colour output on Windows; graceful fallback)
 
-devref v3.0 runs on the Python standard library alone.
-No pip install required for core functionality.
+devref v3.0 runs on the Python standard library alone. No pip install
+required for core functionality.
 
 
 ----------------------------------------------------------
   SUMMARY TABLE
 ----------------------------------------------------------
 
-Command / Feature              v2.0        v3.0
-────────────────────────────── ─────────── ───────────────
-Tool name matching             exact only  normalised fuzzy
-Tool hex IDs                   no          yes
-Snippets system                yes         REMOVED
-Free-text search               yes         REMOVED
-Tag search (cross-tool)        --find --tag devref --search
-Tag search (per-tool)          no          --find --tool --tag
---delete                       yes         renamed --del
---edit (shows current data)    no          YES (editor)
---notepad (console editor)     Notepad.exe system editor
---add <tool> --topic           no name     requires name
---prompt (unified format)      split files single file
---find --prompt <topic>        no          new
---import --tool / --topic      no          new flags
---export (format)              Markdown    JSON
---recent                       yes         REMOVED
---backup                       yes         REMOVED
---set                          yes         REMOVED
---note                         no          NEW
-Per-tool JSON files            no          YES (ref/*.json)
-header.json master index       no          YES (src/header.json)
+Command / Feature              v2.0          v3.0
+────────────────────────────── ───────────── ─────────────────────────────
+Codebase layout                single script commands / components / utils
+Tool name matching             exact only    normalised fuzzy
+Tool hex IDs                   no            yes (utils/ids.py)
+Tool-level type field          no            YES (interpreter, cmdlinetool…)
+Topic-level type field         no            YES (subcommand, flag, concept…)
+Topic flags field              no            YES ({ "--flag": "desc" })
+Topic arguments field          no            YES ({ "<arg>": "desc" })
+Snippets system                yes           REMOVED
+Free-text search               yes           REMOVED
+Tag search (cross-tool)        --find --tag  devref --search
+Tag search (per-tool)          no            --find <tool> --tag
+--delete                       yes           renamed --del
+--edit (shows current data)    no            YES (editor, all fields)
+--notepad (console editor)     Notepad.exe   system editor ($EDITOR/nano/vim)
+--add <tool> --topic           no name       requires name
+--prompt (unified format)      split files   single file + type/flags/args
+--find --prompt <topic>        no            new (auto-creates skeleton)
+inner_call skeleton mode       no            new (cmd_add inner_call=1)
+--import --tool / --topic      no            new flags
+--import idempotent merge      no            YES
+--export (format)              Markdown      JSON (includes type/flags/args)
+--list shows type              no            YES
+--recent                       yes           REMOVED
+--backup                       yes           REMOVED
+--set                          yes           REMOVED
+--note                         no            NEW
+Per-tool JSON files            no            YES (ref/*.json)
+header.json master index       no            YES (src/header.json)
 
 ==========================================================
