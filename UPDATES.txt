@@ -1,6 +1,6 @@
 ==========================================================
   devref  --  UPDATES
-  Changes from v2.0 → v3.0
+  Changes from v2.0 → v2.1
 ==========================================================
 
 
@@ -15,7 +15,7 @@ v2.0 layout:
       ├── snippets.json   (all snippets in one file)
       └── meta.json       (settings + recent history)
 
-v3.0 layout:
+v2.1 layout:
   devref/
   ├── devref.py               (entry point — arg dispatch table)
   ├── devref.bat              (Windows launcher)
@@ -46,7 +46,7 @@ v3.0 layout:
   │   ├── python.json
   │   └── ...
   └── notes/
-      └── *.txt               (note files, new in v3.0)
+      └── *.txt               (note files, new in v2.1)
 
 Reason: Splitting tools into individual files avoids loading the entire
 database for every command and keeps each tool's data self-contained and
@@ -93,7 +93,7 @@ ref/<tool>.json structure:
 
 v2.0: single devref.py script.
 
-v3.0: split into four packages:
+v2.1: split into four packages:
 
   commands/   one module per CLI flag (cmd_find, cmd_new, etc.)
   components/ shared terminal output, editor, and wizard helpers
@@ -118,7 +118,7 @@ Key modules:
 
 v2.0: exact lowercase match only. "git" ≠ "Git".
 
-v3.0: all names are normalised by stripping spaces, underscores, and
+v2.1: all names are normalised by stripping spaces, underscores, and
 hyphens and lowercasing before comparison. Implemented in utils/ids.py.
 
   git  ==  Git  ==  G_it  ==  g-it  ==  GIT
@@ -154,7 +154,7 @@ Used for disambiguation only; normal lookup is by name.
 
 v2.0: no type classification for tools or topics.
 
-v3.0: a "type" field has been added at both the tool level and the topic
+v2.1: a "type" field has been added at both the tool level and the topic
 level.
 
 Tool-level type (stored in header.json):
@@ -181,7 +181,7 @@ so generated JSON matches the schema.
 
 v2.0: no structured field for flags or positional arguments.
 
-v3.0: two optional fields added to the topic schema:
+v2.1: two optional fields added to the topic schema:
 
   "flags": {
     "--amend":      "rewrite the previous commit",
@@ -227,7 +227,7 @@ v2.0: free-text fuzzy search across all content in all files.
   devref --search "environment"
   → matched words anywhere in descriptions, examples, etc.
 
-v3.0: tag-based search only.
+v2.1: tag-based search only.
   devref --search <tag>
   → searches tool-level and topic-level tags across all tools
 
@@ -254,7 +254,7 @@ Also removed:
 v2.0: wizard asked for description, use-cases, tags then opened a loop for
 topics. --notepad opened Windows Notepad.
 
-v3.0: same terminal wizard behaviour. Now also prompts for tool-level type
+v2.1: same terminal wizard behaviour. Now also prompts for tool-level type
 (via collect_tool_type() in wizard.py).
 --notepad now opens the system console editor ($EDITOR / nano / vim / vi /
 notepad.exe) instead of Windows Notepad only. Template includes type,
@@ -271,7 +271,7 @@ still supported in topic entries).
 v2.0: devref --add <tool> --topic     (no topic name, prompted)
       devref --add <tool> --snippets  (snippets variant)
 
-v3.0: devref --add <tool> --topic <name>
+v2.1: devref --add <tool> --topic <name>
       Topic name is supplied on the command line.
       --snippets variant removed entirely.
       Wizard now collects type, flags, and arguments in addition to the
@@ -292,7 +292,7 @@ v2.0: devref --edit <tool> --topic <name>
       Showed truncated current value in brackets, asked to retype the full
       field to replace it. No visual editing.
 
-v3.0: devref --edit <tool>
+v2.1: devref --edit <tool>
       Opens an editor with name, description and tags pre-loaded. Edit
       only what needs changing. Save and close to apply.
 
@@ -312,7 +312,7 @@ v2.0: --delete <tool>
       --delete <tool> --topic <name>
       --delete <tool> --snippets <name>
 
-v3.0: --del <tool>                       (renamed from --delete)
+v2.1: --del <tool>                       (renamed from --delete)
       --del <tool> --topic <name>
       --snippets variant removed.
 
@@ -326,7 +326,7 @@ v2.0: devref --prompt <tool>
       devref --prompt <tool> --snippets
       Generated separate prompts for tools.json and snippets.json.
 
-v3.0: devref --prompt <tool>
+v2.1: devref --prompt <tool>
       Generates a single prompt for the unified tool format. The prompt
       explicitly instructs the AI to include type at the tool level and
       type, flags, and arguments inside each topic. Multiple topics may be
@@ -350,7 +350,7 @@ Removed:
 v2.0: devref --import <file>
       Auto-detected tools.json vs snippets.json by structure.
 
-v3.0: devref --import <file>
+v2.1: devref --import <file>
       Imports a file exported by --export (unified format).
 
       devref --import <file> --tool <name>
@@ -374,7 +374,7 @@ The snippets.json auto-detection logic has been removed.
 
 v2.0: exported as Markdown (.md) file.
 
-v3.0: exports as a single self-contained JSON file (<tool>_export.json)
+v2.1: exports as a single self-contained JSON file (<tool>_export.json)
 matching the unified ref format, including the new type, flags, and
 arguments fields. This file can be directly re-imported with --import.
 
@@ -385,7 +385,7 @@ arguments fields. This file can be directly re-imported with --import.
 
 v2.0: showed ID, name, description, topic count.
 
-v3.0: also shows the tool-level type field alongside the other columns.
+v2.1: also shows the tool-level type field alongside the other columns.
 
 
 ----------------------------------------------------------
@@ -443,7 +443,7 @@ Notes are stored as plain .txt files in notes/.
 v2.0: devref --tag <tool> <topic> "<tag>"
       A dedicated command to add a tag to a topic.
 
-v3.0: Tags are managed via --edit <tool> --topic <name>, which opens the
+v2.1: Tags are managed via --edit <tool> --topic <name>, which opens the
 full topic JSON. Add or remove tags there. The standalone --tag command
 has been removed.
 
@@ -454,7 +454,7 @@ has been removed.
 
 v2.0: devref --find --tag "<tag>"  (no tool specified)
 
-v3.0: devref --find <tool> --tag <tag>  (scoped to a tool)
+v2.1: devref --find <tool> --tag <tag>  (scoped to a tool)
       devref --search <tag>             (cross-tool tag search)
 
 The old  devref --find --tag  form without a tool name is replaced by
@@ -472,7 +472,7 @@ Removed optional dependencies:
 Remaining optional:
   colorama        (colour output on Windows; graceful fallback)
 
-devref v3.0 runs on the Python standard library alone. No pip install
+devref v2.1 runs on the Python standard library alone. No pip install
 required for core functionality.
 
 
@@ -480,7 +480,7 @@ required for core functionality.
   SUMMARY TABLE
 ----------------------------------------------------------
 
-Command / Feature              v2.0          v3.0
+Command / Feature              v2.0          v2.1
 ────────────────────────────── ───────────── ─────────────────────────────
 Codebase layout                single script commands / components / utils
 Tool name matching             exact only    normalised fuzzy
