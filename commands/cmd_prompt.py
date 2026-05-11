@@ -62,7 +62,7 @@ Use EXACTLY this JSON structure — raw JSON only, no markdown fences, no preamb
 
 Requirements:
 - Set "type" at the tool level to the most accurate category (e.g. interpreter, cmdlinetool, framework, library)
-- Cover at least 6 of the most commonly used topics for "{tool_display}"
+- Cover most commonly used topics for "{tool_display}"
 - Each topic should have a "type" field (subcommand, flag, concept, or workflow)
 - Descriptions: concise and accurate
 - Syntax: use <angle-brackets> for required args and [brackets] for optional
@@ -71,7 +71,6 @@ Requirements:
 - arguments: only include if the topic takes positional args; use "<argname>" as keys
 - Multiple topics may be included in this single file — add as many topic blocks as needed
 - Output raw JSON only — no explanation, preamble or markdown fences
-- dont name topics as "name1-name2" use this format name1name2
 """
     header(f"AI Prompt  —  {tool_display.upper()}")
     print(c(prompt_text, "white"))
