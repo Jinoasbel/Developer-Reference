@@ -29,13 +29,28 @@ def cmd_del(raw_args: list):
                 break
             topic_parts.append(a)
         topic_name = normalise(" ".join(topic_parts))
+        ref_data = load_tool_ref(tool_key)
+        topics = ref_data.get("topics", {})
+
+        is_topic_found : bool = False
+        if topic_name:
+            for def_topic in topics:
+                if topic_name == normalise(def_topic):
+                    topic_name = def_topic
+                    is_topic_found = True
+
         if not topic_name:
             warn("Provide a topic name.")
             return
-        ref_data = load_tool_ref(tool_key)
-        if topic_name not in ref_data.get("topics", {}):
+        
+        if not is_topic_found:
             warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
             return
+        
+        # ref_data = load_tool_ref(tool_key)
+        # if topic_name not in ref_data.get("topics", {}):
+        #     warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
+        #     return
         confirm = input(c(f"\n  Type '{topic_name}' to confirm deletion: ", "yellow")).strip()
         if normalise(confirm) != normalise(topic_name):
             warn("Cancelled.")

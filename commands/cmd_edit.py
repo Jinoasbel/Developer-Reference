@@ -14,7 +14,7 @@ def cmd_edit(raw_args: list):
         warn("Usage: devref --edit <tool>  OR  devref --edit <tool> --topic <name>")
         return
 
-    tool_query, rest = resolve_tool(raw_args)
+    tool_query, rest = resolve_tool(raw_args, normal_flag=False)
     header_data      = load_header()
     matches          = find_tool_keys(tool_query, header_data)
     if not matches:
@@ -28,16 +28,30 @@ def cmd_edit(raw_args: list):
         for a in rest[idx + 1:]:
             if a.startswith("--"):
                 break
-            topic_parts.append(a)
+            topic_parts.append(a) # append <topic> to topic_parts []
         topic_name = normalise(" ".join(topic_parts))
         if not topic_name:
             warn("Provide a topic name.")
             return
         ref_data = load_tool_ref(tool_key)
-        topics   = ref_data.get("topics", {})
-        if topic_name not in topics:
+        topics   = ref_data.get("topics", {}) # remove this line
+        if topic_name:
+            for def_topic in topics:
+                if topic_name == normalise(def_topic):
+                    topic_name = def_topic
+        else:
             warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
             return
+        # --------------------------------------
+
+        """
+        what the below block seems to do is..
+        when topic name is in topics 
+        current <- topic 
+        """
+        # if topic_name not in topics:
+        #     warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
+        #     return
         current = topics[topic_name]
         edited  = open_console_editor_json(current)
         if edited is None:

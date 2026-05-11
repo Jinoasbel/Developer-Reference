@@ -53,7 +53,7 @@ def save_tool_ref(tool_key: str, data: dict):
     save_json(tool_ref_path(tool_key), data)
 
 # ─── Argument resolution ─────────────────────────────────────────────────────
-def resolve_tool(raw_args: list) -> tuple:
+def resolve_tool(raw_args: list, normal_flag = True) -> tuple:
     """
     Join all non-flag tokens before first flag into a single tool name.
     Returns (tool_key, remaining_args).
@@ -69,5 +69,10 @@ def resolve_tool(raw_args: list) -> tuple:
             rest.append(a)
         else:
             tool_parts.append(a)
-    tool_key = normalise(" ".join(tool_parts)) if tool_parts else ""
+    """if tooll part is like ["ed", "dsd"] -> .join would "ed dsd" -> normalize -> eddsd"""
+    if normal_flag is True:
+        tool_key = normalise(" ".join(tool_parts)) if tool_parts else ""
+    else :
+        tool_key = " ".join(tool_parts) if tool_parts else ""
+        
     return tool_key, rest

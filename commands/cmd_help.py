@@ -9,7 +9,7 @@ def cmd_help():
     print()
     print(c("  ╔" + "═" * BOX + "╗", "cyan"))
     print(c("  ║", "cyan") + c(_center("devref  —  Developer Reference CLI"), "bright") + c("║", "cyan"))
-    print(c("  ║", "cyan") + c(_center("v 2.1"), "dim")                                  + c("║", "cyan"))
+    print(c("  ║", "cyan") + c(_center("v 2.1.1"), "dim")                                  + c("║", "cyan"))
     print(c("  ╚" + "═" * BOX + "╝", "cyan"))
 
     section_header("FINDING TOOLS & TOPICS", "yellow")

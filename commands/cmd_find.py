@@ -105,9 +105,15 @@ def cmd_find(raw_args: list):
         topic_name = normalise(" ".join(topic_parts))
         if topic_name:
             topics = ref_data.get("topics", {})
-            if topic_name in topics:
-                display_topic(tool_key, topic_name, topics[topic_name])
-            else:
+            topic_not_found : bool = True
+            for def_topic in topics:
+                if topic_name == normalise(def_topic):
+                    display_topic(tool_key, def_topic, topics[def_topic])
+                    topic_not_found = False
+
+            # if topic_name in topics:
+            #     display_topic(tool_key, topic_name, topics[topic_name])
+            if topic_not_found:
                 warn(f"Topic '{topic_name}' not found under '{tool_key}'.")
                 tip(f"Run:  devref --find {tool_key}  to see all topics")
         else:

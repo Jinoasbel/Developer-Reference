@@ -16,7 +16,7 @@ def cmd_new(raw_args: list):
         warn("Usage: devref --new <tool>")
         return
 
-    tool_query, rest = resolve_tool(raw_args)
+    tool_query, rest = resolve_tool(raw_args, normal_flag = False) #returns with how the data is written when false
     use_notepad      = "--notepad" in rest
 
     if not tool_query:
@@ -75,7 +75,8 @@ def cmd_new(raw_args: list):
         tname_raw = ask("\n  Topic name (blank to finish):", hint=HINTS["topic_name"])
         if not tname_raw:
             break
-        tname = normalise(tname_raw)
+        # tname = normalise(tname_raw)
+        tname = tname_raw
         tdata = collect_topic_data()
         ref_data["topics"][tname] = tdata
         header_data[tool_key]["topics"].append(tname)

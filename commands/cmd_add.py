@@ -17,7 +17,7 @@ def cmd_add(raw_args: list, inner_call=0):
         warn("Usage: devref --add <tool> --topic <name>")
         return
 
-    tool_query, rest = resolve_tool(raw_args)
+    tool_query, rest = resolve_tool(raw_args, normal_flag = False)
     use_notepad      = "--notepad" in rest
 
     header_data = load_header()
@@ -37,7 +37,9 @@ def cmd_add(raw_args: list, inner_call=0):
         if a.startswith("--"):
             break
         topic_parts.append(a)
-    topic_name = normalise(" ".join(topic_parts))
+
+    # topic_name = normalise(" ".join(topic_parts))
+    topic_name = " ".join(topic_parts)
 
     if not topic_name:
         warn("Provide a topic name: devref --add <tool> --topic <name>")
